@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Xcode / XcodeGen
+ImageUpscaler.xcodeproj/
+build/
+DerivedData/
+*.xcresult
+.xcode.env.local
+*.xcuserstate
+
+# Core ML models are large binaries and often licensed separately from the
+# code that uses them — keep them out of git; see Models/README.md.
+Models/*.mlmodel
+Models/*.mlpackage
+Models/*.mlmodelc
+
+# Swift / SPM
+.build/
+*.swp
+.swiftpm/
+
+# Editor
+.idea/
