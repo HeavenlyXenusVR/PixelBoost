@@ -1,0 +1,144 @@
+name: Release iOS IPA
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  release:
+    name: Build & publish iOS release
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Releasing ImageUpscaler version: $VERSION (tag: $TAG)"
+
+      - name: Stamp version into project.yml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i '' "s/MARKETING_VERSION: \".*\"/MARKETING_VERSION: \"$VERSION\"/" project.yml
+          grep MARKETING_VERSION project.yml
+
+      - name: Select Xcode
+        run: |
+          XCODE=$(ls /Applications | grep '^Xcode' | sort -rV | head -1)
+          sudo xcode-select -s "/Applications/$XCODE/Contents/Developer"
+          echo "Selected Xcode: $XCODE"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # No signing secrets configured for this repo yet — always produces an
+      # unsigned IPA (installable with Sideloadly/AltStore, same as
+      # Lumisound's unsigned path). Add IOS_CERTIFICATE_BASE64 /
+      # IOS_CERTIFICATE_PASSWORD / IOS_PROVISION_PROFILE_BASE64 / IOS_TEAM_ID
+      # repo secrets and port Lumisound's release-ios.yml signing step here
+      # if ad-hoc signing is ever needed.
+      - name: Archive (unsigned)
+        run: |
+          mkdir -p build
+          xcodebuild archive \
+            -project ImageUpscaler.xcodeproj \
+            -scheme ImageUpscaler \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/ImageUpscaler.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            SKIP_INSTALL=NO 2>&1 | tee /tmp/xcodebuild.log | tail -20
+          if grep -q "error:" /tmp/xcodebuild.log; then
+            echo "--- Compiler errors ---"
+            grep "error:" /tmp/xcodebuild.log | head -30
+          fi
+          APP=$(find build/ImageUpscaler.xcarchive -name "*.app" | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::Archive did not produce a .app bundle"
+            exit 1
+          fi
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Compile asset catalogs (actool)
+        run: |
+          APP="$APP_PATH"
+          xcrun actool \
+            --output-format human-readable-text \
+            --notices \
+            --warnings \
+            --platform iphoneos \
+            --minimum-deployment-target 16.0 \
+            --target-device iphone \
+            --target-device ipad \
+            --app-icon AppIcon \
+            --output-partial-info-plist /tmp/assetcatalog_output.plist \
+            --compress-pngs \
+            --compile "$APP" \
+            "ImageUpscaler/Resources/Assets.xcassets"
+          echo "Assets.car: $(du -sh "$APP/Assets.car" 2>/dev/null || echo MISSING)"
+
+      - name: Package IPA
+        id: ipa
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          IPA_NAME="ImageUpscaler-${VERSION}-unsigned.ipa"
+          PAYLOAD_DIR="build/Payload/Payload"
+          mkdir -p "$PAYLOAD_DIR"
+          cp -R "$APP_PATH" "$PAYLOAD_DIR/"
+          cd build/Payload
+          zip -r "../$IPA_NAME" Payload/ -x "*.DS_Store"
+          echo "IPA created: $(du -sh ../$IPA_NAME)"
+          echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
+          echo "ipa_path=build/$IPA_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          IPA_NAME="${{ steps.ipa.outputs.ipa_name }}"
+          gh release create "$TAG" \
+            --title "ImageUpscaler v${VERSION}" \
+            --notes "$(printf '## ImageUpscaler v%s\n\nUnsigned IPA — install with [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/).\n\nBundles a converted Real-ESRGAN x4plus Core ML model (BSD-3-Clause) — see Models/README.md. Compiles clean in CI; actual on-device inference has not yet been verified — please test and report back.' "$VERSION")" \
+            "build/$IPA_NAME"
+
+      # Best-effort: never fail the release over this housekeeping commit.
+      - name: Commit stamped version back to main
+        continue-on-error: true
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add project.yml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: bump MARKETING_VERSION to ${{ steps.version.outputs.version }} [skip ci]"
+          for i in 1 2 3; do
+            git push origin HEAD:main && break
+            git fetch origin main
+            git rebase origin/main || git rebase --abort
+          done
