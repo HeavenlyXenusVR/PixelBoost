@@ -1,48 +1,49 @@
 # Models
 
-Drop a compiled Core ML super-resolution model here as `RealESRGAN.mlmodel`
-(or change `modelName` in `CoreMLTileUpscaler.init` to match a different
-filename) and rebuild — `CoreMLTileUpscaler` picks it up automatically and
-the "no model bundled" banner in the app disappears. Nothing else in the
-code needs to change as long as the model's input/output shape matches the
-`Config` defaults below (or you update them to match).
+`RealESRGAN.mlpackage` is bundled and picked up automatically by
+`CoreMLTileUpscaler` — no setup needed. It's a Core ML conversion of
+[Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)'s `x4plus` model
+(general-purpose photo 4x upscaling, BSD-3-Clause). See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the license text and
+[`convert/`](convert/) for the conversion script.
 
-This folder is empty by design (see `.gitignore`) — `.mlmodel`/`.mlpackage`
-files are large binaries usually licensed separately from the app code, so
-don't commit one here without checking its license permits redistribution.
+**Not verified end-to-end.** The conversion (`torch.jit.trace` →
+`coremltools.convert`) was run and produces a `.mlpackage` with the right
+input/output shapes, and the underlying PyTorch model + weights were checked
+separately (ran the un-converted model on a real photo, got a plausible
+sharper/higher-res result, no NaNs) — but the actual compiled Core ML model
+has not been run on-device or in Xcode's simulator, since that requires
+macOS. Build and try it on a real photo before trusting the output; if
+something looks wrong, that's the first place to look.
 
-## Getting a model
+**Performance:** `num_block=23` (the full/"plus" variant, not the smaller
+anime model) is the highest-quality but heaviest Real-ESRGAN config — test
+on a physical device, not the simulator. Neural Engine inference should be
+reasonably fast; CPU-only fallback will be slow per 128x128 tile,
+multiplied by however many tiles a full photo needs.
 
-Real-ESRGAN (anime/general 4x models) is the most commonly converted
-option, but any single-image super-resolution model that takes a
-fixed-size image tile and outputs a `scaleFactor`x larger tile will work
-the same way. Two practical paths:
+## Swapping in a different model
 
-1. **Find one already converted.** Search Hugging Face / GitHub for
-   "Real-ESRGAN coreml" or "super resolution mlmodel" — several people have
-   published pre-converted `.mlpackage`/`.mlmodel` files for exactly this
-   use case. Check the license before shipping it.
-2. **Convert one yourself** with [`coremltools`](https://coremltools.readme.io/):
-   - Export the PyTorch/ONNX Real-ESRGAN model to a fixed input size (e.g.
-     128x128) — Core ML strongly prefers static shapes for image models.
-   - Use `coremltools.convert(...)` with
-     `inputs=[ct.ImageType(...)]` and `outputs=[ct.ImageType(...)]` so the
-     compiled model takes/returns `CVPixelBuffer`s directly — this is what
-     lets `CoreMLTileUpscaler` use `VNCoreMLRequest` /
-     `VNPixelBufferObservation` without any manual pixel-format handling.
-   - Save as `.mlpackage`, then either drag it into this folder (Xcode
-     compiles `.mlpackage` the same as `.mlmodel`) or run
-     `xcrun coremlcompiler compile RealESRGAN.mlpackage .` to get an
-     `.mlmodelc` directly.
+Change `modelName`/`Config` in `CoreMLTileUpscaler.swift` to match. Two
+ways to get another model:
+
+1. **Find one already converted** — search for "coreml" alongside the
+   model name; check its license before shipping it.
+2. **Convert one yourself** — see [`convert/`](convert/) for a working
+   example (Real-ESRGAN specifically), or adapt it: trace the PyTorch model
+   at a fixed input size with `torch.jit.trace`, then
+   `coremltools.convert(..., inputs=[ct.ImageType(...)],
+   outputs=[ct.ImageType(...)])` so the compiled model takes/returns
+   `CVPixelBuffer`s directly — that's what lets `CoreMLTileUpscaler` use
+   `VNCoreMLRequest`/`VNPixelBufferObservation` without manual pixel-format
+   handling. Bake any output denormalization (e.g. clamp + scale back to
+   0-255) into the traced graph itself, since output `ImageType` doesn't
+   apply scale/bias the way input `ImageType` does.
 
 ## Matching `CoreMLTileUpscaler.Config`
 
 | Config field | Must equal |
 |---|---|
-| `tileSize` | The model's fixed input width/height, in pixels |
-| `scaleFactor` | The model's output size ÷ input size (4 for a typical 4x model) |
+| `tileSize` | The model's fixed input width/height, in pixels (128 for the bundled model) |
+| `scaleFactor` | The model's output size ÷ input size (4 for the bundled model) |
 | `overlap` | Your choice — context pixels fed to the model beyond what's kept; 8-16 is reasonable for a 128px tile |
-
-If the model expects something other than 128x128 input or isn't a 4x
-model, update the `Config` defaults in `CoreMLTileUpscaler.swift` (or pass a
-non-default `Config` when constructing it in `UpscalerViewModel`) to match.

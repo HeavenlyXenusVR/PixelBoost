@@ -9,10 +9,8 @@ DerivedData/
 .xcode.env.local
 *.xcuserstate
 
-# Core ML models are large binaries and often licensed separately from the
-# code that uses them — keep them out of git; see Models/README.md.
-Models/*.mlmodel
-Models/*.mlpackage
+# RealESRGAN.mlpackage IS committed (BSD-3-Clause, see Models/README.md) —
+# but Xcode's own compiled-model output isn't source, so ignore that.
 Models/*.mlmodelc
 
 # Swift / SPM

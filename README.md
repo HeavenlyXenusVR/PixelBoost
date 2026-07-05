@@ -5,9 +5,10 @@ super-resolution model — pick a photo, tap Upscale, save the result. No
 server, no network call; everything runs on-device via the Neural
 Engine/GPU through Core ML and Vision.
 
-Ships with a plain Lanczos-resampling fallback (`LanczosUpscaler`) so the
-app is fully functional even before a real model is bundled — see
-[`Models/README.md`](Models/README.md) for how to add one.
+Ships with a real converted model — Real-ESRGAN's `x4plus` (BSD-3-Clause,
+see [`Models/README.md`](Models/README.md)) — plus a plain
+Lanczos-resampling fallback (`LanczosUpscaler`) so the app still works if a
+model is ever missing/swapped out.
 
 ---
 
@@ -40,10 +41,9 @@ xcodegen generate
 open ImageUpscaler.xcodeproj
 ```
 
-Then build & run on a device or simulator running iOS 16+. A physical
-device is strongly recommended once a real Core ML model is bundled —
-Neural Engine inference is dramatically faster than the simulator's CPU
-fallback.
+Then build & run on a **physical device**, not the simulator — the bundled
+model is the full-size Real-ESRGAN config, and Neural Engine inference is
+dramatically faster than the simulator's CPU fallback.
 
 ## Known simplifications (scaffold, not a finished product)
 
@@ -53,3 +53,7 @@ fallback.
   shows up as a visible artifact with a particular model.
 - No disk-based caching of intermediate tiles — very large photos (many
   tiles) hold each tile's output in memory until the final stitch.
+- The bundled model's conversion was checked in PyTorch (real photo in,
+  plausible sharper output, no NaNs) but the actual compiled `.mlpackage`
+  has not been run — that requires Xcode/macOS, which wasn't available
+  where it was converted. See [`Models/README.md`](Models/README.md).
