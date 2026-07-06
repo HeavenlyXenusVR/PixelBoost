@@ -10,9 +10,16 @@ import UIKit
 struct LanczosUpscaler: ImageUpscaling {
     var scaleFactor: Double = 4
 
+    var techniqueInfo: UpscaleTechniqueInfo {
+        UpscaleTechniqueInfo(
+            technique: "lanczos_fallback", modelName: nil,
+            tileSize: nil, overlap: nil, scaleFactor: Int(scaleFactor)
+        )
+    }
+
     private static let context = CIContext()
 
-    func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UIImage {
+    func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UpscaleResult {
         guard let cgImage = image.cgImage else { throw UpscaleError.invalidImage }
         let ciImage = CIImage(cgImage: cgImage)
 
@@ -28,6 +35,6 @@ struct LanczosUpscaler: ImageUpscaling {
             throw UpscaleError.renderFailed
         }
         progress(1.0)
-        return UIImage(cgImage: rendered, scale: 1, orientation: .up)
+        return UpscaleResult(image: UIImage(cgImage: rendered, scale: 1, orientation: .up), tileCount: nil)
     }
 }

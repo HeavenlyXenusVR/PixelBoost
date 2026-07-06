@@ -22,6 +22,7 @@ final class CoreMLTileUpscaler: ImageUpscaling {
 
     private let visionModel: VNCoreMLModel
     private let config: Config
+    let techniqueInfo: UpscaleTechniqueInfo
     private static let ciContext = CIContext()
 
     /// - Parameter modelName: the compiled model's filename without
@@ -36,9 +37,13 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         let mlModel = try MLModel(contentsOf: url)
         self.visionModel = try VNCoreMLModel(for: mlModel)
         self.config = config
+        self.techniqueInfo = UpscaleTechniqueInfo(
+            technique: "coreml_tile", modelName: modelName,
+            tileSize: config.tileSize, overlap: config.overlap, scaleFactor: config.scaleFactor
+        )
     }
 
-    func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UIImage {
+    func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UpscaleResult {
         guard let cgImage = image.cgImage else { throw UpscaleError.invalidImage }
         let tiler = ImageTiler(tileSize: config.tileSize, overlap: config.overlap, scaleFactor: config.scaleFactor)
         let plan = tiler.plan(imageWidth: cgImage.width, imageHeight: cgImage.height)
@@ -66,7 +71,8 @@ final class CoreMLTileUpscaler: ImageUpscaling {
             progress(Double(index + 1) / Double(plan.tiles.count))
         }
 
-        return Self.stitch(results, canvasSize: plan.outputSize)
+        let stitched = Self.stitch(results, canvasSize: plan.outputSize)
+        return UpscaleResult(image: stitched, tileCount: plan.tiles.count)
     }
 
     private func runModel(on tile: UIImage) async throws -> UIImage {

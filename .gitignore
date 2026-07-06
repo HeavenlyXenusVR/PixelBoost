@@ -18,5 +18,11 @@ Models/*.mlmodelc
 *.swp
 .swiftpm/
 
+# Python (server/)
+__pycache__/
+*.pyc
+venv/
+.env
+
 # Editor
 .idea/

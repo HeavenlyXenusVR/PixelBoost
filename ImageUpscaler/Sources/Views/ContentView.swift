@@ -69,6 +69,20 @@ struct ContentView: View {
             } message: {
                 Text("The upscaled image was added to your Photos library.")
             }
+            .toolbar {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    NavigationLink {
+                        HistoryView()
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                    NavigationLink {
+                        SettingsView()
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
+            }
         }
     }
 
