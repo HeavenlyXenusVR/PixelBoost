@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct ImageUpscalerApp: App {
+struct PixelBoostApp: App {
     // Owned once at the app level (not inside ContentView) so Settings'
     // model/quality pickers and ContentView's upscale flow share the same
     // UpscalerProvider — a picker change is visible to whichever screen

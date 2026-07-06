@@ -101,7 +101,7 @@ struct ContentView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Upscaler")
+            .navigationTitle("PixelBoost")
             .task(id: pickerItem) {
                 guard let pickerItem else { return }
                 await viewModel.load(from: pickerItem)

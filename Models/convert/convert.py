@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from rrdbnet import RRDBNet
 
-TILE_SIZE = 128  # must match ImageUpscaler's CoreMLTileUpscaler.Config.tileSize
+TILE_SIZE = 128  # must match PixelBoost's CoreMLTileUpscaler.Config.tileSize
 
 
 class Wrapped(nn.Module):

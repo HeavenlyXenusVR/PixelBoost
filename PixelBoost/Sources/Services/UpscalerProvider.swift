@@ -69,8 +69,8 @@ enum UpscaleQuality: String, CaseIterable, Identifiable {
 /// model switch in Settings is visible to whichever screen runs next.
 @MainActor
 final class UpscalerProvider: ObservableObject {
-    private static let modelChoiceDefaultsKey = "com.imageupscaler.modelChoice"
-    private static let qualityDefaultsKey = "com.imageupscaler.quality"
+    private static let modelChoiceDefaultsKey = "com.pixelboost.modelChoice"
+    private static let qualityDefaultsKey = "com.pixelboost.quality"
 
     @Published var modelChoice: UpscaleModelChoice {
         didSet { UserDefaults.standard.set(modelChoice.rawValue, forKey: Self.modelChoiceDefaultsKey) }

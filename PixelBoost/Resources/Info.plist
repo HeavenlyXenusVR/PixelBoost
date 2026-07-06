@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Upscaler</string>
+	<string>PixelBoost</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -23,9 +23,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Upscaler needs access to your photos so you can pick an image to upscale.</string>
+	<string>PixelBoost needs access to your photos so you can pick an image to upscale.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Upscaler saves the upscaled image back to your photo library.</string>
+	<string>PixelBoost saves the upscaled image back to your photo library.</string>
 	<key>UpscalerBridgeAPIKey</key>
 	<string>$(UPSCALER_BRIDGE_API_KEY)</string>
 	<key>UILaunchScreen</key>

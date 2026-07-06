@@ -83,7 +83,7 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent("Version", value: appVersion)
-                Link(destination: URL(string: "https://github.com/HeavenlyXenusVR/ImageUpscaler")!) {
+                Link(destination: URL(string: "https://github.com/HeavenlyXenusVR/PixelBoost")!) {
                     Label("Source on GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
                 }
             } header: {

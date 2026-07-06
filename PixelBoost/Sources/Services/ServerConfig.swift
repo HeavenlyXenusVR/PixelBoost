@@ -5,8 +5,8 @@ import Foundation
 /// (@AppStorage against the same keys), e.g. to point a dev build at a
 /// local instance.
 enum ServerConfig {
-    static let baseURLDefaultsKey = "com.imageupscaler.serverBaseURL"
-    static let apiKeyDefaultsKey = "com.imageupscaler.serverAPIKey"
+    static let baseURLDefaultsKey = "com.pixelboost.serverBaseURL"
+    static let apiKeyDefaultsKey = "com.pixelboost.serverAPIKey"
 
     /// Just a hostname, not a secret — safe to bake in directly.
     static let defaultBaseURLString = "https://upscaler-bridge.xenusanimations.studio"

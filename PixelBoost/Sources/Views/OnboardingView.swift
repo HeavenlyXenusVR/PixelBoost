@@ -12,7 +12,7 @@ struct OnboardingView: View {
     private let pages: [OnboardingPage] = [
         OnboardingPage(
             systemImage: "sparkles",
-            title: "Upscaler",
+            title: "PixelBoost",
             message: "Turn blurry or low-resolution photos into sharp, higher-resolution images using an on-device AI model — nothing ever leaves your phone unless you choose to back it up."
         ),
         OnboardingPage(

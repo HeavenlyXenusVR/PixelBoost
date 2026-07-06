@@ -2,7 +2,7 @@
 .DS_Store
 
 # Xcode / XcodeGen
-ImageUpscaler.xcodeproj/
+PixelBoost.xcodeproj/
 build/
 DerivedData/
 *.xcresult

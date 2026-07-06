@@ -1,4 +1,4 @@
-# Upscaler
+# PixelBoost
 
 A small iOS app that upscales a photo using an on-device Core ML
 super-resolution model — pick a photo, tap Upscale, save the result. The
@@ -91,7 +91,7 @@ than committing an `.xcodeproj` directly:
 ```bash
 brew install xcodegen   # once
 xcodegen generate
-open ImageUpscaler.xcodeproj
+open PixelBoost.xcodeproj
 ```
 
 Then build & run on a **physical device**, not the simulator — both

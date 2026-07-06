@@ -5,7 +5,7 @@ import Foundation
 /// persisted locally, purely to group one device's history together and let
 /// `GET /log/history?device_id=...` filter to it.
 enum DeviceIdentity {
-    private static let defaultsKey = "com.imageupscaler.deviceID"
+    private static let defaultsKey = "com.pixelboost.deviceID"
 
     static var current: String {
         if let existing = UserDefaults.standard.string(forKey: defaultsKey) {
