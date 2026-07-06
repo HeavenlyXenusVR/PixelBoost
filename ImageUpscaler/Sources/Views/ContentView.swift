@@ -1,11 +1,14 @@
 import PhotosUI
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var viewModel: UpscalerViewModel
     @EnvironmentObject private var provider: UpscalerProvider
     @State private var pickerItem: PhotosPickerItem?
     @State private var zoomedImage: UIImage?
+    @State private var isBackingUp = false
+    @State private var backupAlertMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -72,6 +75,20 @@ struct ContentView: View {
                             }
                             .buttonStyle(.bordered)
                         }
+
+                        if ServerConfig.baseURL != nil {
+                            Button {
+                                Task { await backupResultToCloud(resultImage) }
+                            } label: {
+                                Label(
+                                    isBackingUp ? "Backing Up…" : "Backup to Cloud",
+                                    systemImage: "icloud.and.arrow.up"
+                                )
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isBackingUp)
+                        }
                     }
 
                     if let errorMessage = viewModel.errorMessage {
@@ -93,6 +110,14 @@ struct ContentView: View {
             } message: {
                 Text("The upscaled image was added to your Photos library.")
             }
+            .alert("Cloud Backup", isPresented: Binding(
+                get: { backupAlertMessage != nil },
+                set: { isPresented in if !isPresented { backupAlertMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(backupAlertMessage ?? "")
+            }
             .fullScreenCover(isPresented: Binding(
                 get: { zoomedImage != nil },
                 set: { isPresented in if !isPresented { zoomedImage = nil } }
@@ -103,6 +128,11 @@ struct ContentView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    NavigationLink {
+                        CloudView()
+                    } label: {
+                        Image(systemName: "icloud")
+                    }
                     NavigationLink {
                         HistoryView()
                     } label: {
@@ -116,6 +146,19 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private func backupResultToCloud(_ image: UIImage) async {
+        isBackingUp = true
+        do {
+            _ = try await ImportExportService.upload(image, kind: .exports)
+            backupAlertMessage = "Backed up to cloud — it'll stay available for 24 hours (see it under the cloud icon)."
+            Haptics.success()
+        } catch {
+            backupAlertMessage = error.localizedDescription
+            Haptics.error()
+        }
+        isBackingUp = false
     }
 
     @ViewBuilder
