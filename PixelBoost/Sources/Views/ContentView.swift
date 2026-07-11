@@ -14,7 +14,7 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(spacing: 18) {
                     if !provider.modelChoice.isBundled {
                         modelMissingBanner
                     }
@@ -23,9 +23,8 @@ struct ContentView: View {
 
                     PhotosPicker(selection: $pickerItem, matching: .images) {
                         Label("Choose Photo", systemImage: "photo.on.rectangle")
-                            .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.pbGhost)
                     .simultaneousGesture(TapGesture().onEnded { Haptics.lightImpact() })
 
                     if viewModel.sourceImage != nil {
@@ -34,18 +33,51 @@ struct ContentView: View {
                             viewModel.upscale()
                         } label: {
                             Label("Upscale", systemImage: "wand.and.stars")
-                                .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(viewModel.isUpscaling)
+                        .buttonStyle(.pbGradient)
+                        .disabled(viewModel.isUpscaling || provider.isTestingModels)
                     }
 
-                    if viewModel.isUpscaling {
-                        ProgressView(value: viewModel.progress)
-                            .progressViewStyle(.linear)
-                        Text("Upscaling… \(Int(viewModel.progress * 100))%")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                    if provider.isTestingModels {
+                        HStack(spacing: 8) {
+                            ProgressView().tint(PBColor.accent)
+                            Text("Testing models on your photo…")
+                                .font(.system(size: 13))
+                                .foregroundStyle(PBColor.inkDim)
+                        }
+                    } else if viewModel.isUpscaling {
+                        VStack(spacing: 6) {
+                            ProgressView(value: viewModel.progress)
+                                .progressViewStyle(.linear)
+                                .tint(PBColor.accent)
+                            Text("Upscaling… \(Int(viewModel.progress * 100))%")
+                                .font(.system(size: 13))
+                                .foregroundStyle(PBColor.inkDim)
+                        }
+                    }
+
+                    if provider.modelChoice == .auto, let picked = provider.lastAutoSelectedModel,
+                       viewModel.resultImage != nil {
+                        HStack(spacing: 8) {
+                            Text("✨").font(.system(size: 13))
+                            Text("Auto picked \(picked.displayName)")
+                                .font(.system(size: 12.5, weight: .bold))
+                                .foregroundStyle(PBColor.ink)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(
+                            LinearGradient(
+                                colors: [PBColor.accent.opacity(0.14), PBColor.accent2.opacity(0.14)],
+                                startPoint: .leading, endPoint: .trailing
+                            ),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(PBColor.accent2.opacity(0.3), lineWidth: 1)
+                        )
                     }
 
                     if let resultImage = viewModel.resultImage {
@@ -53,28 +85,25 @@ struct ContentView: View {
                             viewModel.saveResultToPhotos()
                         } label: {
                             Label("Save to Photos", systemImage: "square.and.arrow.down")
-                                .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.pbGradient)
 
-                        HStack(spacing: 12) {
+                        HStack(spacing: 10) {
                             ShareLink(
                                 item: Image(uiImage: resultImage),
                                 preview: SharePreview("Upscaled Photo", image: Image(uiImage: resultImage))
                             ) {
                                 Label("Share", systemImage: "square.and.arrow.up")
-                                    .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.pbGhost)
 
                             Button {
                                 UIPasteboard.general.image = resultImage
                                 Haptics.lightImpact()
                             } label: {
                                 Label("Copy", systemImage: "doc.on.doc")
-                                    .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.pbGhost)
                         }
 
                         if ServerConfig.baseURL != nil {
@@ -85,23 +114,25 @@ struct ContentView: View {
                                     isBackingUp ? "Backing Up…" : "Backup to Cloud",
                                     systemImage: "icloud.and.arrow.up"
                                 )
-                                .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.pbGhost)
                             .disabled(isBackingUp)
                         }
                     }
 
                     if let errorMessage = viewModel.errorMessage {
                         Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(PBColor.bad)
                             .multilineTextAlignment(.center)
                     }
                 }
-                .padding()
+                .padding(16)
             }
+            .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("PixelBoost")
+            .toolbarBackground(PBColor.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .task(id: pickerItem) {
                 guard let pickerItem else { return }
                 await viewModel.load(from: pickerItem)
@@ -134,32 +165,35 @@ struct ContentView: View {
                 OnboardingView { hasSeenOnboarding = true }
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    NavigationLink {
-                        BatchUpscaleView(provider: provider)
-                    } label: {
-                        Image(systemName: "photo.stack")
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    HStack(spacing: 2) {
+                        NavigationLink { BatchUpscaleView(provider: provider) } label: {
+                            toolbarIcon("square.stack")
+                        }
+                        NavigationLink { CloudView() } label: {
+                            toolbarIcon("icloud")
+                        }
+                        NavigationLink { HistoryView() } label: {
+                            toolbarIcon("clock.arrow.circlepath")
+                        }
+                        NavigationLink { SettingsView() } label: {
+                            toolbarIcon("gearshape")
+                        }
                     }
-                }
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    NavigationLink {
-                        CloudView()
-                    } label: {
-                        Image(systemName: "icloud")
-                    }
-                    NavigationLink {
-                        HistoryView()
-                    } label: {
-                        Image(systemName: "clock.arrow.circlepath")
-                    }
-                    NavigationLink {
-                        SettingsView()
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
+                    .padding(4)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(PBColor.line, lineWidth: 1))
                 }
             }
         }
+        .preferredColorScheme(.dark)
+    }
+
+    private func toolbarIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(PBColor.ink)
+            .frame(width: 30, height: 30)
     }
 
     private func backupResultToCloud(_ image: UIImage) async {
@@ -178,33 +212,65 @@ struct ContentView: View {
     @ViewBuilder
     private var imagePreview: some View {
         if let sourceImage = viewModel.sourceImage, let resultImage = viewModel.resultImage {
-            VStack(spacing: 6) {
-                CompareSliderView(before: sourceImage, after: resultImage)
-                    .frame(height: 320)
-                Text("Before/After · drag to compare · \(Int(resultImage.size.width))×\(Int(resultImage.size.height))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(spacing: 8) {
+                ZStack(alignment: .top) {
+                    CompareSliderView(before: sourceImage, after: resultImage)
+                        .frame(height: 300)
+                    HStack {
+                        tag("Before")
+                        Spacer()
+                        tag("\(Int(resultImage.size.width))×\(Int(resultImage.size.height))")
+                    }
+                    .padding(10)
+                }
+                Text("Drag to compare")
+                    .font(.system(size: 12))
+                    .foregroundStyle(PBColor.inkFaint)
             }
         } else if let resultImage = viewModel.resultImage {
             labeledImage("After", image: resultImage)
         } else if let sourceImage = viewModel.sourceImage {
             labeledImage("Before", image: sourceImage)
         } else {
-            // Not using ContentUnavailableView — it needs iOS 17, and this
-            // app targets 16.
             VStack(spacing: 10) {
-                Image(systemName: "photo.badge.plus")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.secondary)
-                Text("No Photo Selected")
-                    .font(.headline)
-                Text("Choose a photo to upscale it.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(PBColor.accentGradient)
+                        .frame(width: 52, height: 52)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                Text("No Photo Yet")
+                    .font(.system(size: 15.5, weight: .bold))
+                    .foregroundStyle(PBColor.ink)
+                Text("Choose a photo — Auto will pick the model for you.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(PBColor.inkDim)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 220)
+            .background(
+                LinearGradient(colors: [PBColor.accent.opacity(0.06), .clear], startPoint: .top, endPoint: .bottom)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                    .foregroundStyle(PBColor.line)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
+    }
+
+    private func tag(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.45), in: Capsule())
     }
 
     private func labeledImage(_ label: String, image: UIImage) -> some View {
@@ -212,22 +278,26 @@ struct ContentView: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
-                .frame(maxHeight: 320)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .frame(maxHeight: 300)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .onTapGesture { zoomedImage = image }
             Text("\(label) · \(Int(image.size.width))×\(Int(image.size.height))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(PBColor.inkFaint)
         }
     }
 
     private var modelMissingBanner: some View {
         Label("No Core ML model bundled — using basic resampling. See Models/README.md.", systemImage: "exclamationmark.triangle")
-            .font(.footnote)
-            .foregroundStyle(.orange)
+            .font(.system(size: 12))
+            .foregroundStyle(PBColor.warn)
             .padding(10)
-            .frame(maxWidth: .infinity)
-            .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(PBColor.warn.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(PBColor.warn.opacity(0.22), lineWidth: 1)
+            )
     }
 }
 

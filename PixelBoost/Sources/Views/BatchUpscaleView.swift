@@ -14,84 +14,121 @@ struct BatchUpscaleView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                PhotosPicker(selection: $pickerItems, maxSelectionCount: 20, matching: .images) {
-                    Label("Choose Photos", systemImage: "photo.on.rectangle.angled")
-                }
-                .disabled(viewModel.isRunning)
-                .onChange(of: pickerItems) { newValue in
-                    viewModel.setSelection(newValue)
-                }
-
-                if !viewModel.items.isEmpty {
-                    Button {
-                        Haptics.lightImpact()
-                        viewModel.runAll()
-                    } label: {
-                        Label(
-                            viewModel.isRunning ? "Upscaling…" : "Upscale All (\(viewModel.items.count))",
-                            systemImage: "wand.and.stars"
-                        )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                PBCard {
+                    PhotosPicker(selection: $pickerItems, maxSelectionCount: 20, matching: .images) {
+                        PBCardRow(icon: "photo.on.rectangle.angled", label: "Choose Photos")
                     }
                     .disabled(viewModel.isRunning)
-                }
-            } footer: {
-                Text("Each result saves straight to Photos as it finishes, up to 20 photos per batch.")
-            }
+                    .onChange(of: pickerItems) { newValue in
+                        viewModel.setSelection(newValue)
+                    }
 
-            if !viewModel.items.isEmpty {
-                Section("Queue") {
-                    ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
-                        BatchItemRow(item: item, isCurrent: viewModel.currentIndex == index)
+                    if !viewModel.items.isEmpty {
+                        PBRowDivider()
+                        Button {
+                            Haptics.lightImpact()
+                            viewModel.runAll()
+                        } label: {
+                            PBCardRow(
+                                icon: "wand.and.stars", iconTint: PBColor.accent2,
+                                label: viewModel.isRunning ? "Upscaling…" : "Upscale All (\(viewModel.items.count))"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(viewModel.isRunning)
+                    }
+                }
+                PBFootnote(text: "Each result saves straight to Photos as it finishes, up to 20 photos per batch.")
+
+                if !viewModel.items.isEmpty {
+                    PBSectionLabel(title: "Queue (\(doneCount)/\(viewModel.items.count))")
+                    ProgressView(value: Double(doneCount), total: Double(viewModel.items.count))
+                        .tint(PBColor.accent)
+                        .padding(.horizontal, 2)
+
+                    VStack(spacing: 8) {
+                        ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
+                            BatchItemCard(item: item, isCurrent: viewModel.currentIndex == index)
+                        }
                     }
                 }
             }
+            .padding(16)
         }
+        .background(PBColor.background.ignoresSafeArea())
         .navigationTitle("Batch Upscale")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(PBColor.background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .preferredColorScheme(.dark)
+    }
+
+    private var doneCount: Int {
+        viewModel.items.filter {
+            if case .done = $0.status { return true }
+            return false
+        }.count
     }
 }
 
-private struct BatchItemRow: View {
+private struct BatchItemCard: View {
     let item: BatchUpscaleViewModel.Item
     let isCurrent: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            statusIcon
+            statusRing
             Text(statusText)
-                .font(.subheadline)
-                .foregroundStyle(isFailed ? .red : .primary)
+                .font(.system(size: 13.5, weight: .semibold))
+                .foregroundStyle(isFailed ? PBColor.bad : PBColor.ink)
                 .lineLimit(2)
             Spacer()
             if isCurrent {
-                ProgressView()
+                ProgressView().tint(PBColor.accent)
             }
         }
+        .padding(11)
+        .background(PBColor.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(PBColor.line, lineWidth: 1)
+        )
     }
 
     @ViewBuilder
-    private var statusIcon: some View {
+    private var statusRing: some View {
         switch item.status {
         case .pending:
-            Image(systemName: "circle.dashed")
-                .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
+            Circle()
+                .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
+                .foregroundStyle(PBColor.surface3)
+                .frame(width: 30, height: 30)
         case .processing:
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(.blue)
-                .frame(width: 32, height: 32)
+            Circle()
+                .stroke(PBColor.accent, lineWidth: 2)
+                .frame(width: 30, height: 30)
+                .overlay(
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(PBColor.accent)
+                )
         case .done(let thumbnail):
             Image(uiImage: thumbnail)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(width: 30, height: 30)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         case .failed:
-            Image(systemName: "xmark.circle.fill")
-                .foregroundStyle(.red)
-                .frame(width: 32, height: 32)
+            Circle()
+                .fill(PBColor.bad.opacity(0.15))
+                .frame(width: 30, height: 30)
+                .overlay(
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(PBColor.bad)
+                )
         }
     }
 

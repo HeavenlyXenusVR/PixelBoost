@@ -53,7 +53,7 @@ final class UpscalerViewModel: ObservableObject {
             // Resolve once and capture as a local `let` so this run always
             // finishes with the upscaler it started with, even if the
             // model/quality selection changes in Settings mid-flight.
-            let upscaler = await provider.resolveCurrent()
+            let upscaler = await provider.resolveCurrent(for: sourceImage)
             let outcome = await UpscaleRunner.run(
                 sourceImage, using: upscaler, sourceFileSizeBytes: sourceFileSizeBytes
             ) { [weak self] value in

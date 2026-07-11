@@ -17,8 +17,8 @@ struct OnboardingView: View {
         ),
         OnboardingPage(
             systemImage: "wand.and.stars",
-            title: "Pick, Upscale, Compare",
-            message: "Choose a photo, tap Upscale, then drag the before/after slider to see the difference. Switch between a General Photo model and an Anime/Illustration model in Settings, and trade speed for quality with Fast/Standard/Best."
+            title: "Pick, Test, Upscale",
+            message: "Choose a photo and Auto quietly tests it against every bundled model, then upscales with whichever looks sharpest. Prefer to choose yourself? General Photo and Anime/Illustration models are one tap away."
         ),
         OnboardingPage(
             systemImage: "icloud",
@@ -28,29 +28,48 @@ struct OnboardingView: View {
     ]
 
     var body: some View {
-        VStack(spacing: 0) {
-            TabView(selection: $page) {
-                ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
-                    OnboardingPageView(page: page)
-                        .tag(index)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .always))
-            .indexViewStyle(.page(backgroundDisplayMode: .always))
+        ZStack {
+            PBColor.background.ignoresSafeArea()
+            RadialGradient(
+                colors: [PBColor.accent2.opacity(0.22), .clear],
+                center: UnitPoint(x: 0.5, y: 0.05), startRadius: 20, endRadius: 420
+            )
+            .ignoresSafeArea()
 
-            Button {
-                if page < pages.count - 1 {
-                    withAnimation { page += 1 }
-                } else {
-                    onFinish()
+            VStack(spacing: 0) {
+                TabView(selection: $page) {
+                    ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+                        OnboardingPageView(page: page)
+                            .tag(index)
+                    }
                 }
-            } label: {
-                Text(page < pages.count - 1 ? "Next" : "Get Started")
-                    .frame(maxWidth: .infinity)
+                .tabViewStyle(.page(indexDisplayMode: .never))
+
+                HStack(spacing: 6) {
+                    ForEach(pages.indices, id: \.self) { index in
+                        Capsule()
+                            .fill(index == page ? AnyShapeStyle(PBColor.accentGradient) : AnyShapeStyle(PBColor.surface3))
+                            .frame(width: index == page ? 18 : 6, height: 6)
+                            .animation(.easeInOut(duration: 0.2), value: page)
+                    }
+                }
+                .padding(.bottom, 18)
+
+                Button {
+                    if page < pages.count - 1 {
+                        withAnimation { page += 1 }
+                    } else {
+                        onFinish()
+                    }
+                } label: {
+                    Text(page < pages.count - 1 ? "Next" : "Get Started")
+                }
+                .buttonStyle(.pbGradient)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 22)
             }
-            .buttonStyle(.borderedProminent)
-            .padding()
         }
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -64,29 +83,30 @@ private struct OnboardingPageView: View {
     let page: OnboardingPage
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 22) {
             Spacer()
-            Image(systemName: page.systemImage)
-                .font(.system(size: 64))
-                .foregroundStyle(AccentColorProxy.color)
+            ZStack {
+                Circle()
+                    .fill(PBColor.accentGradient)
+                    .frame(width: 84, height: 84)
+                    .shadow(color: PBColor.accent2.opacity(0.45), radius: 24, y: 10)
+                Image(systemName: page.systemImage)
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
             Text(page.title)
-                .font(.title2.weight(.bold))
+                .font(.system(size: 23, weight: .heavy))
+                .foregroundStyle(PBColor.ink)
             Text(page.message)
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 14.5))
+                .foregroundStyle(PBColor.inkDim)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .padding(.horizontal, 34)
+                .lineSpacing(3)
             Spacer()
             Spacer()
         }
     }
-}
-
-/// `Color("AccentColor")` needs the asset catalog name explicitly — SwiftUI's
-/// `.tint`/implicit accent isn't guaranteed to resolve the same way inside a
-/// plain `Image.foregroundStyle` outside of controls.
-private enum AccentColorProxy {
-    static let color = Color("AccentColor")
 }
 
 #Preview {

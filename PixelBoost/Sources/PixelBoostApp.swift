@@ -20,6 +20,11 @@ struct PixelBoostApp: App {
             ContentView()
                 .environmentObject(provider)
                 .environmentObject(viewModel)
+                // Deliberate single-theme commitment (see Views/Theme.swift)
+                // — the redesign is built for a dark canvas throughout, the
+                // same choice Halide/Darkroom/Lightroom make by default,
+                // not a partial dark-mode adaptation of a light design.
+                .preferredColorScheme(.dark)
         }
     }
 }

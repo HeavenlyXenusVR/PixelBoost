@@ -40,8 +40,13 @@ final class BatchUpscaleViewModel: ObservableObject {
             // Resolved once for the whole batch — same in-flight-safety
             // reasoning as UpscalerViewModel.upscale(): a model/quality
             // change in Settings mid-batch shouldn't switch the upscaler
-            // out from under items still queued.
-            let upscaler = await provider.resolveCurrent()
+            // out from under items still queued. If `.auto` is selected,
+            // its candidate test runs against the first item only (loaded
+            // here, then reloaded by processItem(at:) — a small duplicated
+            // fetch, not a network call, in exchange for not threading a
+            // preloaded image through the whole queue for one case).
+            let previewImage = await Self.loadPreviewImage(items.first?.pickerItem)
+            let upscaler = await provider.resolveCurrent(for: previewImage)
             for index in items.indices {
                 currentIndex = index
                 items[index].status = .processing
@@ -92,6 +97,12 @@ final class BatchUpscaleViewModel: ObservableObject {
         try await PHPhotoLibrary.shared().performChanges {
             PHAssetChangeRequest.creationRequestForAsset(from: image)
         }
+    }
+
+    private static func loadPreviewImage(_ pickerItem: PhotosPickerItem?) async -> UIImage? {
+        guard let pickerItem,
+              let data = try? await pickerItem.loadTransferable(type: Data.self) else { return nil }
+        return UIImage(data: data)
     }
 
     private static func thumbnail(of image: UIImage, maxDimension: CGFloat = 120) -> UIImage {

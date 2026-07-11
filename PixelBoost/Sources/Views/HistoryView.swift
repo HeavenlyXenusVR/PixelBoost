@@ -10,49 +10,43 @@ struct HistoryView: View {
     var body: some View {
         Group {
             if let errorMessage {
-                VStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 36))
-                        .foregroundStyle(.secondary)
-                    Text(errorMessage)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyState(systemImage: "exclamationmark.triangle", title: nil, message: errorMessage)
             } else if entries.isEmpty && !isLoading {
-                VStack(spacing: 10) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 36))
-                        .foregroundStyle(.secondary)
-                    Text("No history yet")
-                        .font(.headline)
-                    Text("Upscale a photo and it'll show up here.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyState(
+                    systemImage: "clock.arrow.circlepath", title: "No history yet",
+                    message: "Upscale a photo and it'll show up here."
+                )
             } else {
+                // A styled List, not a plain ScrollView, so swipe-to-delete
+                // and pull-to-refresh stay free instead of hand-rolled.
                 List {
                     if let stats {
                         Section {
-                            StatsHeaderView(stats: stats)
+                            StatsStrip(stats: stats)
                         }
                         .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
                     Section {
                         ForEach(entries) { entry in
-                            HistoryRow(entry: entry)
+                            HistoryCard(entry: entry)
+                                .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                         }
                         .onDelete(perform: delete)
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
+        .background(PBColor.background.ignoresSafeArea())
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(PBColor.background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .task { await load() }
         .refreshable { await load() }
         .toolbar {
@@ -74,6 +68,27 @@ struct HistoryView: View {
         } message: {
             Text("This deletes every logged upscale attempt for this device. It can't be undone.")
         }
+        .preferredColorScheme(.dark)
+    }
+
+    private func emptyState(systemImage: String, title: String?, message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 34))
+                .foregroundStyle(PBColor.inkFaint)
+            if let title {
+                Text(title)
+                    .font(.system(size: 15.5, weight: .bold))
+                    .foregroundStyle(PBColor.ink)
+            }
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundStyle(PBColor.inkDim)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PBColor.background.ignoresSafeArea())
     }
 
     private func load() async {
@@ -111,31 +126,38 @@ struct HistoryView: View {
     }
 }
 
-private struct StatsHeaderView: View {
+private struct StatsStrip: View {
     let stats: UpscaleStats
 
     var body: some View {
-        HStack(spacing: 0) {
-            statColumn(value: "\(stats.total)", label: "Upscales")
-            Divider()
-            statColumn(value: successRateText, label: "Success")
-            Divider()
-            statColumn(value: avgTimeText, label: "Avg Time")
-            Divider()
-            statColumn(value: megapixelsText, label: "Megapixels")
+        HStack(spacing: 8) {
+            statCard(value: "\(stats.total)", label: "Upscales")
+            statCard(value: successRateText, label: "Success")
+            statCard(value: avgTimeText, label: "Avg Time")
+            statCard(value: megapixelsText, label: "Megapixels")
         }
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
     }
 
-    private func statColumn(value: String, label: String) -> some View {
-        VStack(spacing: 2) {
+    private func statCard(value: String, label: String) -> some View {
+        VStack(spacing: 3) {
             Text(value)
-                .font(.subheadline.weight(.semibold))
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 17, weight: .heavy))
+                .foregroundStyle(PBColor.ink)
+            Text(label.uppercased())
+                .font(.system(size: 9.5, weight: .bold))
+                .tracking(0.3)
+                .foregroundStyle(PBColor.inkFaint)
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(PBColor.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(PBColor.line, lineWidth: 1)
+        )
     }
 
     private var successRateText: String {
@@ -154,39 +176,46 @@ private struct StatsHeaderView: View {
     }
 }
 
-private struct HistoryRow: View {
+private struct HistoryCard: View {
     let entry: UpscaleHistoryEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: entry.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(entry.success ? .green : .red)
-                Text(techniqueLabel)
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(entry.created_at)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(entry.success ? PBColor.good : PBColor.bad)
+                .frame(width: 3)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(techniqueLabel)
+                        .font(.system(size: 13.5, weight: .bold))
+                        .foregroundStyle(PBColor.ink)
+                    Spacer()
+                    Text(entry.created_at)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(PBColor.inkFaint)
+                }
+                Text("\(entry.source_width)×\(entry.source_height) → \(outputSizeText) · \(entry.processing_ms) ms")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(PBColor.inkDim)
 
-            Text("\(entry.source_width)×\(entry.source_height) → \(outputSizeText) · \(entry.processing_ms) ms")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if let tileCount = entry.tile_count {
-                Text("\(tileCount) tile\(tileCount == 1 ? "" : "s"), \(entry.tile_size ?? 0)px, overlap \(entry.overlap ?? 0)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let errorMessage = entry.error_message {
-                Text(errorMessage)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
+                if let tileCount = entry.tile_count {
+                    Text("\(tileCount) tile\(tileCount == 1 ? "" : "s"), \(entry.tile_size ?? 0)px, overlap \(entry.overlap ?? 0)")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(PBColor.inkFaint)
+                }
+                if let errorMessage = entry.error_message {
+                    Text(errorMessage)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(PBColor.bad)
+                }
             }
         }
-        .padding(.vertical, 2)
+        .padding(12)
+        .background(PBColor.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(PBColor.line, lineWidth: 1)
+        )
     }
 
     private var techniqueLabel: String {
