@@ -38,9 +38,13 @@ deciding for you — see "Compare Models" below.
 - **Overlays** — add text (and, via the system keyboard's own emoji key,
   "stickers") on top of a photo; drag to reposition, tap to edit color/size
   or delete.
-- Cutout/Adjust/Crop/Filters/Overlays all chain onto whichever result is
-  currently showing (crop the upscaled photo, filter a cutout, etc.) rather
-  than always reaching back to the original.
+- **Object Removal ("Erase")** — paint over something to erase it; the
+  marked area is filled in with a diffusion-based fill that pulls color
+  inward from the surrounding pixels — not a generative model, see "Known
+  simplifications" below.
+- Cutout/Adjust/Crop/Filters/Overlays/Erase all chain onto whichever result
+  is currently showing (crop the upscaled photo, filter a cutout, etc.)
+  rather than always reaching back to the original.
 - **Compare Models** — with Auto selected, Upscale runs the whole photo
   through every bundled model and shows every result in a tappable,
   full-screen-viewable grid; pick whichever looks best, or save them all.
@@ -158,3 +162,13 @@ dramatically faster than the simulator's CPU fallback.
   rotate gesture, and no dedicated sticker-art library (emoji via the
   system keyboard cover that role instead). Size/color are set from a
   sheet, not a live on-canvas transform.
+- Object Removal ("Erase") is a classical diffusion fill (repeated,
+  growing-radius blur with the unmasked pixels held fixed), not a
+  generative inpainting model — there's no on-device Vision-framework
+  shortcut for this the way there was for background removal, and
+  blind-converting/shipping a generative model with no GPU and no
+  device/simulator to check its actual output on was judged too risky to
+  bet this feature on. It works well for small objects/blemishes over
+  fairly uniform backgrounds; larger or heavily textured regions will come
+  out smeared/blurred rather than reconstructed, since nothing here
+  invents new texture.
