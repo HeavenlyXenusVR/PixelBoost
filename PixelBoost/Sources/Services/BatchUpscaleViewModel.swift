@@ -1,4 +1,3 @@
-import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -76,7 +75,7 @@ final class BatchUpscaleViewModel: ObservableObject {
                 items[index].status = .failed(outcome.error?.localizedDescription ?? "Upscale failed.")
                 return
             }
-            try await saveToPhotos(result.image)
+            try await PhotoLibrarySaver.save(result.image, overwriting: items[index].pickerItem.itemIdentifier)
             // Keep only a small thumbnail, not the full-resolution result —
             // a 4000x4000 output is ~64MB uncompressed, and holding N of
             // those in memory across a whole queued batch (rather than
@@ -86,16 +85,6 @@ final class BatchUpscaleViewModel: ObservableObject {
             items[index].status = .done(thumbnail: Self.thumbnail(of: result.image))
         } catch {
             items[index].status = .failed(error.localizedDescription)
-        }
-    }
-
-    private func saveToPhotos(_ image: UIImage) async throws {
-        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else {
-            throw UpscaleError.photoLibraryAccessDenied
-        }
-        try await PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAsset(from: image)
         }
     }
 

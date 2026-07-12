@@ -71,6 +71,16 @@ deciding for you — see "Compare Models" below.
   detail instead of skipping analysis to hit a smaller ratio directly.
 - **Before/after comparison slider** — drag to reveal, right on the main
   screen once a photo's upscaled.
+- **Save overwrites the original by default** — saving a result (single
+  photo or batch) replaces the original photo you picked in place, rather
+  than adding a second, duplicate copy next to it. Uses `PHContentEditingOutput`
+  keyed off the `PhotosPickerItem`'s asset identifier, which needs full
+  Photos read/write access (not just add-only) — falls back to adding a
+  new asset instead if that's declined, the identifier's missing, or the
+  original can't be found (e.g. deleted since picking), so saving never
+  just fails outright. "Save All" on a Compare Models grid is the one
+  exception and always adds new assets, since there's no single result
+  there to overwrite the original with.
 - **Model & quality picker** (Settings) — Auto, General Photo, Anime /
   Illustration, Portrait, and Fast & Clean models, plus Fast (Lanczos,
   instant) / Standard / Best (Core ML, trading tile-seam quality for speed

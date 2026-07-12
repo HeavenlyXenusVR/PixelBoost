@@ -45,6 +45,13 @@ final class UpscalerViewModel: ObservableObject {
     /// this is the only point this is ever available.
     private var sourceFileSizeBytes: Int?
 
+    /// Also captured at picker-load time (`PhotosPickerItem.itemIdentifier`)
+    /// — lets `saveResultToPhotos()` overwrite the original asset in place
+    /// by default instead of always adding a duplicate. `nil` for anything
+    /// the picker couldn't hand back an identifier for, in which case
+    /// saving just falls back to adding a new asset as before.
+    private var sourceAssetIdentifier: String?
+
     init(provider: UpscalerProvider) {
         self.provider = provider
     }
@@ -52,6 +59,7 @@ final class UpscalerViewModel: ObservableObject {
     func load(from item: PhotosPickerItem) async {
         errorMessage = nil
         resultImage = nil
+        sourceAssetIdentifier = item.itemIdentifier
         do {
             guard let data = try await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data),
@@ -179,14 +187,17 @@ final class UpscalerViewModel: ObservableObject {
         }
     }
 
+    /// Overwrites the original photo in place by default (see
+    /// `PhotoLibrarySaver`) rather than adding a second, duplicate asset
+    /// next to it — applies no matter which tool(s) produced `resultImage`
+    /// (Upscale, Cutout, Adjust, Crop, Filters, Overlays, Erase all share
+    /// this one property), since they all funnel through the same "current
+    /// result" state.
     func saveResultToPhotos() {
         guard let resultImage else { return }
         Task {
             do {
-                try await requestPhotoLibraryAddPermission()
-                try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetChangeRequest.creationRequestForAsset(from: resultImage)
-                }
+                try await PhotoLibrarySaver.save(resultImage, overwriting: sourceAssetIdentifier)
                 savedConfirmation = true
                 Haptics.success()
             } catch {
@@ -198,7 +209,10 @@ final class UpscalerViewModel: ObservableObject {
 
     /// Saves every current comparison result to Photos in one action, for
     /// anyone who'd rather decide later (or keep more than one) than pick
-    /// a single winner on the spot.
+    /// a single winner on the spot. Deliberately always adds new assets
+    /// rather than going through `PhotoLibrarySaver`'s overwrite-in-place
+    /// default — there's no single "the" result here to overwrite the
+    /// original with, that's the whole point of saving every candidate.
     func saveAllComparisonResultsToPhotos() {
         guard !comparisonResults.isEmpty else { return }
         let images = comparisonResults.map(\.image)
