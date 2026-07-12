@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var backupAlertMessage: String?
     @State private var isPresentingAdjustments = false
     @State private var isPresentingCropRotate = false
+    @State private var isPresentingFilters = false
     @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
 
     var body: some View {
@@ -180,6 +181,11 @@ struct ContentView: View {
                     CropRotateView(image: currentImage) { viewModel.resultImage = $0 }
                 }
             }
+            .fullScreenCover(isPresented: $isPresentingFilters) {
+                if let currentImage {
+                    FiltersView(image: currentImage) { viewModel.resultImage = $0 }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 2) {
@@ -239,6 +245,9 @@ struct ContentView: View {
                 }
                 toolChip("Crop", systemImage: "crop") {
                     isPresentingCropRotate = true
+                }
+                toolChip("Filters", systemImage: "camera.filters") {
+                    isPresentingFilters = true
                 }
             }
         }
