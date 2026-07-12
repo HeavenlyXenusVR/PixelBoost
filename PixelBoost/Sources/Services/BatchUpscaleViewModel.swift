@@ -75,7 +75,10 @@ final class BatchUpscaleViewModel: ObservableObject {
                 items[index].status = .failed(outcome.error?.localizedDescription ?? "Upscale failed.")
                 return
             }
-            try await PhotoLibrarySaver.save(result.image, overwriting: items[index].pickerItem.itemIdentifier)
+            try await PhotoLibrarySaver.save(
+                result.image, overwriting: items[index].pickerItem.itemIdentifier,
+                format: provider.exportFormat, quality: provider.exportQuality
+            )
             // Keep only a small thumbnail, not the full-resolution result —
             // a 4000x4000 output is ~64MB uncompressed, and holding N of
             // those in memory across a whole queued batch (rather than

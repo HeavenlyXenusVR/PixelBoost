@@ -104,6 +104,31 @@ enum UpscaleFactor: Int, CaseIterable, Identifiable {
     var displayName: String { "\(rawValue)×" }
 }
 
+/// File format saved results are encoded as. `.auto` keeps the original
+/// heuristic (PNG for anything with real alpha — a Cutout result, most
+/// obviously — JPEG otherwise) rather than forcing one format regardless
+/// of transparency. See `PhotoLibrarySaver`.
+enum ExportFormat: String, CaseIterable, Identifiable {
+    case auto
+    case heic
+    case jpeg
+    case png
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .auto: return "Auto"
+        case .heic: return "HEIC"
+        case .jpeg: return "JPEG"
+        case .png: return "PNG"
+        }
+    }
+
+    /// PNG is lossless — there's no quality dial to show for it.
+    var usesQuality: Bool { self != .png }
+}
+
 /// Resolves the `ImageUpscaling` strategy to use for a run, based on the
 /// user's model/quality selection, and caches loaded Core ML models by name
 /// so switching quality presets back and forth doesn't reload the
@@ -116,6 +141,8 @@ final class UpscalerProvider: ObservableObject {
     private static let modelChoiceDefaultsKey = "com.pixelboost.modelChoice"
     private static let qualityDefaultsKey = "com.pixelboost.quality"
     private static let scaleFactorDefaultsKey = "com.pixelboost.scaleFactor"
+    private static let exportFormatDefaultsKey = "com.pixelboost.exportFormat"
+    private static let exportQualityDefaultsKey = "com.pixelboost.exportQuality"
 
     /// Side of the test region (before the model's own scale factor) run
     /// through each candidate during `BatchUpscaleViewModel`'s unattended
@@ -133,6 +160,16 @@ final class UpscalerProvider: ObservableObject {
     }
     @Published var scaleFactor: UpscaleFactor {
         didSet { UserDefaults.standard.set(scaleFactor.rawValue, forKey: Self.scaleFactorDefaultsKey) }
+    }
+    @Published var exportFormat: ExportFormat {
+        didSet { UserDefaults.standard.set(exportFormat.rawValue, forKey: Self.exportFormatDefaultsKey) }
+    }
+    /// JPEG/HEIC compression quality, 0...1. Meaningless for `.png`
+    /// (lossless) — kept as a single shared value rather than one per
+    /// format since a user picking between HEIC and JPEG almost certainly
+    /// wants "the same tradeoff," not to retune it per format.
+    @Published var exportQuality: Double {
+        didSet { UserDefaults.standard.set(exportQuality, forKey: Self.exportQualityDefaultsKey) }
     }
     /// True while a not-yet-cached model is being loaded — lets the UI show
     /// a spinner instead of silently hitching on the first use of a given
@@ -162,6 +199,10 @@ final class UpscalerProvider: ObservableObject {
             .flatMap(UpscaleQuality.init(rawValue:)) ?? .standard
         let storedScale = UserDefaults.standard.object(forKey: Self.scaleFactorDefaultsKey) as? Int
         scaleFactor = storedScale.flatMap(UpscaleFactor.init(rawValue:)) ?? .x4
+        exportFormat = UserDefaults.standard.string(forKey: Self.exportFormatDefaultsKey)
+            .flatMap(ExportFormat.init(rawValue:)) ?? .auto
+        let storedQuality = UserDefaults.standard.object(forKey: Self.exportQualityDefaultsKey) as? Double
+        exportQuality = storedQuality ?? 0.9
     }
 
     /// Resolves the upscaler for the *current* model/quality/scale

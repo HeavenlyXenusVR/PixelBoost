@@ -85,6 +85,11 @@ deciding for you — see "Compare Models" below.
   just fails outright. "Save All" on a Compare Models grid is the one
   exception and always adds new assets, since there's no single result
   there to overwrite the original with.
+- **Export format & quality** (Settings) — Auto (PNG if the result has
+  real transparency, JPEG otherwise), or force HEIC/JPEG/PNG, plus a
+  shared quality slider for whichever lossy format ends up being used.
+  Applies to every save — single photo, batch, and Compare Models' "Save
+  All."
 - **Model & quality picker** (Settings) — Auto, General Photo, Anime /
   Illustration, Portrait, and Fast & Clean models, plus Fast (Lanczos,
   instant) / Standard / Best (Core ML, trading tile-seam quality for speed

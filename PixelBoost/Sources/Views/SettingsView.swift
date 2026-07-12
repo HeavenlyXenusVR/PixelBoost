@@ -34,6 +34,16 @@ struct SettingsView: View {
 
                 CustomPresetsCard()
 
+                PBSectionLabel(title: "Export")
+                PBCard {
+                    exportFormatRow
+                    if provider.exportFormat.usesQuality {
+                        PBRowDivider()
+                        exportQualityRow
+                    }
+                }
+                PBFootnote(text: "Auto keeps a photo's transparency if it has any (a Cutout result, say) by saving as PNG, and uses JPEG otherwise — pick HEIC or JPEG to force a specific format (both lose any transparency), or PNG to always keep it lossless. Applies to every save, single photo or batch.")
+
                 PBSectionLabel(title: "Feedback")
                 PBCard {
                     Toggle(isOn: $hapticsEnabled) {
@@ -149,6 +159,35 @@ struct SettingsView: View {
             PBCardRow(icon: "arrow.up.left.and.arrow.down.right", label: "Output Scale", value: "\(provider.scaleFactor.displayName) ›")
         }
         .buttonStyle(.plain)
+    }
+
+    private var exportFormatRow: some View {
+        Menu {
+            ForEach(ExportFormat.allCases) { format in
+                Button(format.displayName) { provider.exportFormat = format }
+            }
+        } label: {
+            PBCardRow(icon: "square.and.arrow.up", label: "Format", value: "\(provider.exportFormat.displayName) ›")
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var exportQualityRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Quality")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(PBColor.ink)
+                Spacer()
+                Text("\(Int(provider.exportQuality * 100))%")
+                    .font(.system(size: 13))
+                    .foregroundStyle(PBColor.inkDim)
+            }
+            Slider(value: $provider.exportQuality, in: 0.5...1)
+                .tint(PBColor.accent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     private func loadingRow(text: String) -> some View {

@@ -1,4 +1,3 @@
-import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -197,7 +196,10 @@ final class UpscalerViewModel: ObservableObject {
         guard let resultImage else { return }
         Task {
             do {
-                try await PhotoLibrarySaver.save(resultImage, overwriting: sourceAssetIdentifier)
+                try await PhotoLibrarySaver.save(
+                    resultImage, overwriting: sourceAssetIdentifier,
+                    format: provider.exportFormat, quality: provider.exportQuality
+                )
                 savedConfirmation = true
                 Haptics.success()
             } catch {
@@ -218,11 +220,10 @@ final class UpscalerViewModel: ObservableObject {
         let images = comparisonResults.map(\.image)
         Task {
             do {
-                try await requestPhotoLibraryAddPermission()
-                try await PHPhotoLibrary.shared().performChanges {
-                    for image in images {
-                        PHAssetChangeRequest.creationRequestForAsset(from: image)
-                    }
+                for image in images {
+                    try await PhotoLibrarySaver.saveAsNewAsset(
+                        image, format: provider.exportFormat, quality: provider.exportQuality
+                    )
                 }
                 savedConfirmation = true
                 Haptics.success()
@@ -230,13 +231,6 @@ final class UpscalerViewModel: ObservableObject {
                 errorMessage = error.localizedDescription
                 Haptics.error()
             }
-        }
-    }
-
-    private func requestPhotoLibraryAddPermission() async throws {
-        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else {
-            throw UpscaleError.photoLibraryAccessDenied
         }
     }
 }
