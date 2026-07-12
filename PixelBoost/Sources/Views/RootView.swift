@@ -6,7 +6,7 @@ import SwiftUI
 /// slider positions, whatever a tab was in the middle of. That's the
 /// tradeoff for a custom scrollable bar instead of a native `TabView`
 /// (which would do this for free, but only for ~5 tabs before collapsing
-/// the rest into "More" — not workable for eleven).
+/// the rest into "More" — not workable for a dozen tabs).
 struct RootView: View {
     @EnvironmentObject private var provider: UpscalerProvider
     @State private var selectedTab: AppTab = .home
@@ -31,6 +31,7 @@ struct RootView: View {
         switch tab {
         case .home: ContentView()
         case .cutout: CutoutTabView()
+        case .enhance: AutoEnhanceView()
         case .adjust: AdjustmentsView()
         case .crop: CropRotateView()
         case .filters: FiltersView()
