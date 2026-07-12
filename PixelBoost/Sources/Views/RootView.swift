@@ -38,6 +38,7 @@ struct RootView: View {
         case .filters: FiltersView()
         case .overlays: OverlaysView()
         case .erase: InpaintView()
+        case .restore: RestoreView()
         case .batch: NavigationStack { BatchUpscaleView(provider: provider) }
         case .cloud: NavigationStack { CloudView() }
         case .history: NavigationStack { HistoryView() }

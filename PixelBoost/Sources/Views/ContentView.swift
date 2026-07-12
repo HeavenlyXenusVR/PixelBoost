@@ -44,7 +44,7 @@ struct ContentView: View {
                         .buttonStyle(.pbGradient)
                         .disabled(isAnyToolRunning)
 
-                        Text("Edit tools — Cutout, Enhance, Adjust, Selective, Crop, Filters, Overlays, Erase — live in the bar below.")
+                        Text("Edit tools — Cutout, Enhance, Adjust, Selective, Crop, Filters, Overlays, Erase, Restore — live in the bar below.")
                             .font(.system(size: 12))
                             .foregroundStyle(PBColor.inkFaint)
                             .multilineTextAlignment(.center)
