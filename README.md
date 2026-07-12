@@ -1,11 +1,14 @@
 # PixelBoost
 
-A small iOS app that upscales a photo using an on-device Core ML
-super-resolution model — pick a photo, tap Upscale, save the result. The
-upscale itself is fully on-device (Neural Engine/GPU via Core ML and
-Vision) and needs no network call; there's a separate, optional server
-(`server/`) for debug logging, temporary cloud backup, and custom presets —
-see "Logging & cloud features" below.
+A small iOS app for upscaling and editing photos, fully on-device (Neural
+Engine/GPU via Core ML and Vision, no network call required) — started as
+a pure super-resolution app and is growing into a broader photo editor
+(background removal now, more editing tools planned). There's a separate,
+optional server (`server/`) for debug logging, temporary cloud backup, and
+custom presets — see "Logging & cloud features" below.
+
+**Requires iOS 17** — Remove Background (Cutout) uses Vision's
+`VNGenerateForegroundInstanceMaskRequest`, which iOS 16 doesn't have.
 
 Ships with four real converted models (all BSD-3-Clause, see
 [`Models/README.md`](Models/README.md)) — Real-ESRGAN's general-photo
@@ -21,6 +24,10 @@ deciding for you — see "Compare Models" below.
 
 ## Features
 
+- **Remove Background (Cutout)** — cuts the main subject(s) out of a photo
+  with a transparent background, using Vision's on-device subject-lifting
+  API (`VNGenerateForegroundInstanceMaskRequest`, iOS 17+) — the same
+  technology behind Photos' own "Lift Subject." No custom model needed.
 - **Compare Models** — with Auto selected, Upscale runs the whole photo
   through every bundled model and shows every result in a tappable,
   full-screen-viewable grid; pick whichever looks best, or save them all.
@@ -125,3 +132,8 @@ dramatically faster than the simulator's CPU fallback.
   [`Models/README.md`](Models/README.md).
 - No share extension, Live Activity/background processing for long
   batches, or iCloud sync yet — a deliberate later effort, not an oversight.
+- Remove Background relies entirely on Vision's own segmentation quality —
+  there's no fallback or manual touch-up (refine edges, add/remove regions)
+  if it misses part of the subject or includes background it shouldn't.
+  Like everything else in this app, it hasn't been run on a physical
+  device yet either.

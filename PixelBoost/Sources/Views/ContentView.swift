@@ -28,21 +28,32 @@ struct ContentView: View {
                     .simultaneousGesture(TapGesture().onEnded { Haptics.lightImpact() })
 
                     if viewModel.sourceImage != nil {
-                        Button {
-                            Haptics.lightImpact()
-                            if isCompareMode {
-                                viewModel.compareModels()
-                            } else {
-                                viewModel.upscale()
+                        HStack(spacing: 10) {
+                            Button {
+                                Haptics.lightImpact()
+                                if isCompareMode {
+                                    viewModel.compareModels()
+                                } else {
+                                    viewModel.upscale()
+                                }
+                            } label: {
+                                Label(
+                                    isCompareMode ? "Compare Models" : "Upscale",
+                                    systemImage: isCompareMode ? "square.grid.2x2" : "wand.and.stars"
+                                )
                             }
-                        } label: {
-                            Label(
-                                isCompareMode ? "Compare Models" : "Upscale",
-                                systemImage: isCompareMode ? "square.grid.2x2" : "wand.and.stars"
-                            )
+                            .buttonStyle(.pbGradient)
+                            .disabled(isAnyToolRunning)
+
+                            Button {
+                                Haptics.lightImpact()
+                                viewModel.removeBackground()
+                            } label: {
+                                Label("Cutout", systemImage: "scissors")
+                            }
+                            .buttonStyle(.pbGhost)
+                            .disabled(isAnyToolRunning)
                         }
-                        .buttonStyle(.pbGradient)
-                        .disabled(viewModel.isUpscaling || viewModel.isComparing)
                     }
 
                     if viewModel.isComparing {
@@ -60,6 +71,13 @@ struct ContentView: View {
                                 .progressViewStyle(.linear)
                                 .tint(PBColor.accent)
                             Text("Upscaling… \(Int(viewModel.progress * 100))%")
+                                .font(.system(size: 13))
+                                .foregroundStyle(PBColor.inkDim)
+                        }
+                    } else if viewModel.isRemovingBackground {
+                        HStack(spacing: 8) {
+                            ProgressView().tint(PBColor.accent)
+                            Text("Finding the subject to cut out…")
                                 .font(.system(size: 13))
                                 .foregroundStyle(PBColor.inkDim)
                         }
@@ -190,6 +208,13 @@ struct ContentView: View {
     /// is what actually happens either way.
     private var isCompareMode: Bool {
         provider.modelChoice == .auto && provider.quality != .fast
+    }
+
+    /// Only one tool at a time — Upscale/Compare Models and Cutout both
+    /// write to `resultImage` and share the same source photo, so running
+    /// two at once would just race each other.
+    private var isAnyToolRunning: Bool {
+        viewModel.isUpscaling || viewModel.isComparing || viewModel.isRemovingBackground
     }
 
     private func toolbarIcon(_ systemName: String) -> some View {

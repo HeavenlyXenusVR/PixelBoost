@@ -28,6 +28,8 @@ final class UpscalerViewModel: ObservableObject {
     @Published var isComparing = false
     @Published var comparisonProgress: Double = 0
 
+    @Published var isRemovingBackground = false
+
     let provider: UpscalerProvider
 
     /// Captured at picker-load time from the original (still-encoded) photo
@@ -141,6 +143,30 @@ final class UpscalerViewModel: ObservableObject {
     func pickComparisonResult(_ result: ModelComparisonResult) {
         resultImage = result.image
         comparisonResults = []
+    }
+
+    /// Cuts the subject out of the *original* photo (not whatever's
+    /// currently in `resultImage`) — a standalone tool alongside Upscale/
+    /// Compare Models, not a step chained onto them. `resultImage` is
+    /// reused as where the cutout lands since every downstream action
+    /// (Save/Share/Copy/the compare slider) already just works with
+    /// whatever image is there, transparency included.
+    func removeBackground() {
+        guard let sourceImage, !isRemovingBackground else { return }
+        isRemovingBackground = true
+        errorMessage = nil
+
+        Task {
+            do {
+                let cutout = try await BackgroundRemovalService.removeBackground(from: sourceImage)
+                self.resultImage = cutout
+                Haptics.success()
+            } catch {
+                self.errorMessage = error.localizedDescription
+                Haptics.error()
+            }
+            self.isRemovingBackground = false
+        }
     }
 
     func saveResultToPhotos() {

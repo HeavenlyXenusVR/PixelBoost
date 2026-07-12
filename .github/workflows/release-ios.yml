@@ -96,7 +96,7 @@ jobs:
             --notices \
             --warnings \
             --platform iphoneos \
-            --minimum-deployment-target 16.0 \
+            --minimum-deployment-target 17.0 \
             --target-device iphone \
             --target-device ipad \
             --app-icon AppIcon \
