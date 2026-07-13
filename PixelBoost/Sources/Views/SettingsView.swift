@@ -33,6 +33,7 @@ struct SettingsView: View {
                 PBFootnote(text: "Auto runs every bundled model on the whole photo and shows you all of them side by side to pick from — Batch Upscale (nobody's watching per photo there) still picks automatically via a quick sharpness test instead. Fast skips the model entirely (plain resampling, instant). Standard/Best trade speed for tile-seam quality. Output Scale always analyzes at each model's native 4x, then resizes down to your chosen size — 2x/3x still benefit from the model's full detail, not a shortcut.")
 
                 CustomPresetsCard()
+                ICloudPresetsCard()
 
                 PBSectionLabel(title: "Export")
                 PBCard {

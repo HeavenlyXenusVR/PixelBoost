@@ -123,7 +123,12 @@ deciding for you — see "Compare Models" below.
   instant) / Standard / Best (Core ML, trading tile-seam quality for speed
   via context overlap).
 - **Custom presets** — name your own model+overlap combination beyond the
-  built-in three.
+  built-in three; server-backed (needs a server configured).
+- **iCloud presets** — the same named model+overlap combinations, but
+  synced across your devices via `NSUbiquitousKeyValueStore` instead of the
+  server — no server or account needed, just being signed into iCloud.
+  Independent of Custom Presets above (separate storage, separate list);
+  see "Known simplifications" below.
 - **Batch upscale** — queue up to 20 photos, each saved to Photos as it
   finishes.
 - **Cloud backup** — optionally back up a result to temporary (auto-
@@ -284,3 +289,11 @@ dramatically faster than the simulator's CPU fallback.
   extension would still "succeed" from the sharing app's point of view,
   but the photo would never reach the main app) — flag this as unverified
   if anyone hits it.
+- iCloud Presets stores the entire preset list as one JSON blob under a
+  single `NSUbiquitousKeyValueStore` key rather than merging per-preset —
+  if two devices both save a change at nearly the same moment, whichever
+  one's sync lands last simply overwrites the other's list wholesale. Same
+  no-device caveat as the Share Extension: there's no second iCloud-signed
+  device available here to actually watch a cross-device sync happen, so
+  the multi-device behavior is unverified, only the local read/write path
+  has been checked by reading through Apple's documented `KVS` semantics.
