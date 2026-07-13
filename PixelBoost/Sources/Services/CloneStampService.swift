@@ -51,13 +51,14 @@ enum CloneStampService {
         // coordinate space is bottom-left/y-up — the x component carries
         // over as-is, but the y component's sign has to flip (the same
         // kind of flip RestoreService needs for Vision's boundingBox).
+        // Uses CIImage's own `transformed(by:)` rather than the
+        // `CIFilter.affineTransform()` builtin — the CI runner's SDK
+        // doesn't expose that builtin (mirrors the `applyingGaussianBlur`
+        // vs. `CIFilter.gaussianBlur()` surface mismatch found earlier;
+        // this time the safer, more stable API is the plain CIImage method
+        // rather than a CIFilterBuiltins wrapper).
         let transform = CGAffineTransform(translationX: -offset.x, y: offset.y)
-        let shiftFilter = CIFilter.affineTransform()
-        shiftFilter.inputImage = original.clampedToExtent()
-        shiftFilter.transform = transform
-        guard let shifted = shiftFilter.outputImage?.cropped(to: original.extent) else {
-            throw CloneStampError.processingFailed
-        }
+        let shifted = original.clampedToExtent().transformed(by: transform).cropped(to: original.extent)
 
         let blend = CIFilter.blendWithMask()
         blend.inputImage = shifted
