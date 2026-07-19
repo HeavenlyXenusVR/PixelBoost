@@ -143,8 +143,19 @@ enum PhotoLibrarySaver {
             return .assetNotFound
         }
 
+        // canHandleAdjustmentData: true — this is a full content replacement,
+        // not a non-destructive edit on top of the asset's existing
+        // adjustment stack (Markup, Photos' own filters, a prior edit from
+        // another app, ...), so there's nothing about any existing
+        // adjustment data this needs to preserve or be picky about. Passing
+        // `nil` options left this at the framework's default, which for an
+        // asset that already has adjustment history can decline to hand
+        // back usable input at all.
+        let options = PHContentEditingInputRequestOptions()
+        options.canHandleAdjustmentData = { _ in true }
+
         let input: PHContentEditingInput? = await withCheckedContinuation { continuation in
-            asset.requestContentEditingInput(with: nil) { input, info in
+            asset.requestContentEditingInput(with: options) { input, info in
                 if input == nil {
                     logger.error("Overwrite skipped: requestContentEditingInput returned nil, info: \(String(describing: info), privacy: .public)")
                 }
@@ -165,8 +176,14 @@ enum PhotoLibrarySaver {
             }
             return nil
         } catch {
-            logger.error("Overwrite failed: \(error.localizedDescription, privacy: .public)")
-            return .writeFailed(error.localizedDescription)
+            // The full NSError, not just localizedDescription — PHPhotosError
+            // ("PHPhotosErrorDomain error NNNN") carries most of its actual
+            // diagnostic detail in userInfo, which localizedDescription
+            // alone drops on the floor.
+            let nsError = error as NSError
+            let detail = "\(error.localizedDescription) [domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)]"
+            logger.error("Overwrite failed: \(detail, privacy: .public)")
+            return .writeFailed(detail)
         }
     }
 
