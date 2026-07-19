@@ -13,12 +13,53 @@ import UIKit
 /// deleted/moved since picking, or the user declines full library access
 /// for the overwrite path — so a save never just fails outright over this.
 enum PhotoLibrarySaver {
+    /// Why a save landed on "add a new asset" instead of overwriting —
+    /// surfaced all the way to the confirmation alert (see `ContentView`)
+    /// so a failed overwrite is no longer indistinguishable from a working
+    /// one, or from the two cases where skipping overwrite is intentional.
+    enum OverwriteFailureReason {
+        /// Not a failure — the user's own "Preserve Original" toggle.
+        case preserveOriginalEnabled
+        /// Not a failure — nothing to overwrite (e.g. an image shared in
+        /// from another app rather than picked from the library).
+        case noSourceAssetIdentifier
+        case authorizationDenied(PHAuthorizationStatus)
+        case assetNotFound
+        case contentEditingInputUnavailable
+        case writeFailed(String)
+
+        /// `false` for the two intentional/expected cases above.
+        var isFailure: Bool {
+            switch self {
+            case .preserveOriginalEnabled, .noSourceAssetIdentifier: return false
+            default: return true
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .preserveOriginalEnabled:
+                return "Preserve Original is on in Settings"
+            case .noSourceAssetIdentifier:
+                return "this photo wasn't loaded from your library"
+            case .authorizationDenied(let status):
+                return "Photos access is \(status.rawValue) (not full/limited read-write)"
+            case .assetNotFound:
+                return "the original couldn't be found in your library (moved, deleted, or not visible to this app)"
+            case .contentEditingInputUnavailable:
+                return "the original photo's data couldn't be read"
+            case .writeFailed(let message):
+                return message
+            }
+        }
+    }
+
     /// What actually happened — the caller can no longer tell overwrite
     /// success from a silent fallback just from "did this throw or not",
     /// since both `save` outcomes complete without throwing.
     enum SaveOutcome {
         case overwroteOriginal
-        case addedNewAsset
+        case addedNewAsset(reason: OverwriteFailureReason?)
     }
 
     private static let logger = Logger(subsystem: "com.pixelboost.ios", category: "PhotoLibrarySaver")
@@ -31,12 +72,18 @@ enum PhotoLibrarySaver {
         _ image: UIImage, overwriting assetIdentifier: String?, format: ExportFormat, quality: Double,
         forceNewAsset: Bool = false
     ) async throws -> SaveOutcome {
-        if !forceNewAsset, let assetIdentifier,
-           await overwriteOriginalAsset(assetIdentifier, with: image, format: format, quality: quality) {
-            return .overwroteOriginal
+        let reason: OverwriteFailureReason?
+        if forceNewAsset {
+            reason = .preserveOriginalEnabled
+        } else if let assetIdentifier {
+            reason = await overwriteOriginalAsset(assetIdentifier, with: image, format: format, quality: quality)
+        } else {
+            reason = .noSourceAssetIdentifier
         }
+
+        guard let reason else { return .overwroteOriginal }
         try await saveAsNewAsset(image, format: format, quality: quality)
-        return .addedNewAsset
+        return .addedNewAsset(reason: reason)
     }
 
     /// Always adds a new asset rather than overwriting — used both as
@@ -60,21 +107,22 @@ enum PhotoLibrarySaver {
     /// Requests full read/write access (not just `.addOnly` — overwriting
     /// requires reading/replacing an existing asset, which add-only access
     /// can't do) and, if granted, replaces `localIdentifier`'s content via
-    /// `PHContentEditingOutput`. Returns `false` rather than throwing for
-    /// every "can't overwrite" case, so the caller can silently fall back
-    /// to creating a new asset instead of failing the save.
+    /// `PHContentEditingOutput`. Returns `nil` on success, or the specific
+    /// reason it couldn't rather than throwing, so the caller can fall back
+    /// to creating a new asset instead of failing the save outright while
+    /// still reporting why to `SaveOutcome`.
     private static func overwriteOriginalAsset(
         _ localIdentifier: String, with image: UIImage, format: ExportFormat, quality: Double
-    ) async -> Bool {
+    ) async -> OverwriteFailureReason? {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         guard status == .authorized || status == .limited else {
             logger.error("Overwrite skipped: readWrite authorization status is \(status.rawValue, privacy: .public)")
-            return false
+            return .authorizationDenied(status)
         }
 
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject else {
             logger.error("Overwrite skipped: no PHAsset found for identifier (asset moved/deleted, or not visible under Limited Library access)")
-            return false
+            return .assetNotFound
         }
 
         let input: PHContentEditingInput? = await withCheckedContinuation { continuation in
@@ -85,7 +133,10 @@ enum PhotoLibrarySaver {
                 continuation.resume(returning: input)
             }
         }
-        guard let input, let data = encodedData(for: image, format: format, quality: quality) else { return false }
+        guard let input else { return .contentEditingInputUnavailable }
+        guard let data = encodedData(for: image, format: format, quality: quality) else {
+            return .writeFailed("couldn't encode the edited image")
+        }
 
         let output = PHContentEditingOutput(contentEditingInput: input)
         do {
@@ -94,10 +145,10 @@ enum PhotoLibrarySaver {
                 let request = PHAssetChangeRequest(for: asset)
                 request.contentEditingOutput = output
             }
-            return true
+            return nil
         } catch {
             logger.error("Overwrite failed: \(error.localizedDescription, privacy: .public)")
-            return false
+            return .writeFailed(error.localizedDescription)
         }
     }
 
