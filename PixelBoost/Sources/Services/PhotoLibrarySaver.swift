@@ -151,8 +151,18 @@ enum PhotoLibrarySaver {
         // `nil` options left this at the framework's default, which for an
         // asset that already has adjustment history can decline to hand
         // back usable input at all.
+        //
+        // isNetworkAccessAllowed: true — with iCloud Photos + "Optimize
+        // iPhone Storage" (the default), most photos exist on-device only
+        // as a smaller local rendition, with the actual full-resolution
+        // original in iCloud. Without this, requestContentEditingInput can
+        // still succeed using that local rendition, but the later
+        // performChanges commit — which needs the *original* resource to
+        // replace — then fails with PHPhotosErrorMissingResource (error
+        // 3303) since there's no full original on-device to replace.
         let options = PHContentEditingInputRequestOptions()
         options.canHandleAdjustmentData = { _ in true }
+        options.isNetworkAccessAllowed = true
 
         let input: PHContentEditingInput? = await withCheckedContinuation { continuation in
             asset.requestContentEditingInput(with: options) { input, info in
