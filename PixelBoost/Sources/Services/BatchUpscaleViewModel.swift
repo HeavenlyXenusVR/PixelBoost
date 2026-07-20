@@ -93,7 +93,7 @@ final class BatchUpscaleViewModel: ObservableObject {
             try await PhotoLibrarySaver.save(
                 imageToSave, overwriting: items[index].pickerItem.itemIdentifier,
                 format: provider.exportFormat, quality: provider.exportQuality,
-                forceNewAsset: provider.preserveOriginal
+                forceNewAsset: provider.preserveOriginal, addToAlbum: provider.addToAlbumEnabled
             )
             // Keep only a small thumbnail, not the full-resolution result —
             // a 4000x4000 output is ~64MB uncompressed, and holding N of

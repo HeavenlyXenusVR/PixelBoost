@@ -106,22 +106,25 @@ enum PhotoLibrarySaver {
     /// - Parameter forceNewAsset: skips the replace path entirely and
     ///   always adds a new asset — the "Preserve Original" Settings toggle,
     ///   for anyone who wants the pre-overwrite-default behavior back.
+    /// - Parameter addToAlbum: also adds the saved asset to the
+    ///   "PixelBoost" album (see `PhotoAlbumService`) — the "Add to
+    ///   PixelBoost Album" Settings toggle.
     @discardableResult
     static func save(
         _ image: UIImage, overwriting assetIdentifier: String?, format: ExportFormat, quality: Double,
-        forceNewAsset: Bool = false
+        forceNewAsset: Bool = false, addToAlbum: Bool = true
     ) async throws -> SaveOutcome {
         if !forceNewAsset, let assetIdentifier {
-            switch await replaceAsset(assetIdentifier, with: image, format: format, quality: quality) {
+            switch await replaceAsset(assetIdentifier, with: image, format: format, quality: quality, addToAlbum: addToAlbum) {
             case .success(let newAssetIdentifier):
                 return .overwroteOriginal(newAssetIdentifier: newAssetIdentifier)
             case .failure(let reason):
-                try await saveAsNewAsset(image, format: format, quality: quality)
+                try await saveAsNewAsset(image, format: format, quality: quality, addToAlbum: addToAlbum)
                 return .addedNewAsset(reason: reason)
             }
         }
 
-        try await saveAsNewAsset(image, format: format, quality: quality)
+        try await saveAsNewAsset(image, format: format, quality: quality, addToAlbum: addToAlbum)
         return .addedNewAsset(reason: forceNewAsset ? .preserveOriginalEnabled : .noSourceAssetIdentifier)
     }
 
@@ -129,7 +132,7 @@ enum PhotoLibrarySaver {
     /// `save`'s fallback and directly by "Save All" on a Compare Models
     /// grid, which has no single result there to overwrite the original
     /// with (that's the whole point of keeping every candidate).
-    static func saveAsNewAsset(_ image: UIImage, format: ExportFormat, quality: Double) async throws {
+    static func saveAsNewAsset(_ image: UIImage, format: ExportFormat, quality: Double, addToAlbum: Bool = true) async throws {
         guard let data = encodedData(for: image, format: format, quality: quality) else {
             throw UpscaleError.invalidImage
         }
@@ -137,9 +140,17 @@ enum PhotoLibrarySaver {
         guard status == .authorized || status == .limited else {
             throw UpscaleError.photoLibraryAccessDenied
         }
+        // Resolved before entering performChanges since ensureAlbum() is
+        // itself async (it may need its own performChanges round trip to
+        // create the album on first use) and performChanges's own change
+        // block must run synchronously.
+        let album = addToAlbum ? await PhotoAlbumService.ensureAlbum() : nil
         try await PHPhotoLibrary.shared().performChanges {
             let request = PHAssetCreationRequest.forAsset()
             request.addResource(with: .photo, data: data, options: nil)
+            if let album, let placeholder = request.placeholderForCreatedAsset {
+                PHAssetCollectionChangeRequest(for: album)?.addAssets([placeholder] as NSArray)
+            }
         }
     }
 
@@ -154,7 +165,7 @@ enum PhotoLibrarySaver {
     /// can fall back to creating a new asset without deleting anything
     /// instead of failing the save outright.
     private static func replaceAsset(
-        _ localIdentifier: String, with image: UIImage, format: ExportFormat, quality: Double
+        _ localIdentifier: String, with image: UIImage, format: ExportFormat, quality: Double, addToAlbum: Bool = true
     ) async -> Result<String, OverwriteFailureReason> {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         guard status == .authorized || status == .limited else {
@@ -171,12 +182,17 @@ enum PhotoLibrarySaver {
             return .failure(.writeFailed("couldn't encode the edited image"))
         }
 
+        let album = addToAlbum ? await PhotoAlbumService.ensureAlbum() : nil
         do {
             var newIdentifier: String?
             try await PHPhotoLibrary.shared().performChanges {
                 let creationRequest = PHAssetCreationRequest.forAsset()
                 creationRequest.addResource(with: .photo, data: data, options: nil)
-                newIdentifier = creationRequest.placeholderForCreatedAsset?.localIdentifier
+                let placeholder = creationRequest.placeholderForCreatedAsset
+                newIdentifier = placeholder?.localIdentifier
+                if let album, let placeholder {
+                    PHAssetCollectionChangeRequest(for: album)?.addAssets([placeholder] as NSArray)
+                }
                 PHAssetChangeRequest.deleteAssets([asset] as NSArray)
             }
             guard let newIdentifier else {

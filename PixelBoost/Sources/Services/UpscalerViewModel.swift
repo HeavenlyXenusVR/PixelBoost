@@ -241,7 +241,7 @@ final class UpscalerViewModel: ObservableObject {
                 let outcome = try await PhotoLibrarySaver.save(
                     imageToSave, overwriting: sourceAssetIdentifier,
                     format: provider.exportFormat, quality: provider.exportQuality,
-                    forceNewAsset: provider.preserveOriginal
+                    forceNewAsset: provider.preserveOriginal, addToAlbum: provider.addToAlbumEnabled
                 )
                 lastSaveOutcome = outcome
                 // The replace is delete-original-and-create-new under the
@@ -287,7 +287,8 @@ final class UpscalerViewModel: ObservableObject {
                         ? Watermark.apply(text: watermarkText, position: watermarkPosition, opacity: watermarkOpacity, to: image)
                         : image
                     try await PhotoLibrarySaver.saveAsNewAsset(
-                        imageToSave, format: provider.exportFormat, quality: provider.exportQuality
+                        imageToSave, format: provider.exportFormat, quality: provider.exportQuality,
+                        addToAlbum: provider.addToAlbumEnabled
                     )
                 }
                 savedConfirmation = true

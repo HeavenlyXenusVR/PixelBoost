@@ -92,8 +92,17 @@ struct SettingsView: View {
                     .tint(PBColor.accent)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
+                    PBRowDivider()
+                    Toggle(isOn: $provider.addToAlbumEnabled) {
+                        Text("Add to PixelBoost Album")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(PBColor.ink)
+                    }
+                    .tint(PBColor.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                 }
-                PBFootnote(text: "Auto-Save saves a single-photo Upscale result the moment it finishes, no Save tap needed (Batch already always saves per photo). Preserve Original always adds a new photo instead of overwriting the one you picked, undoing the overwrite-by-default behavior everywhere else in the app.")
+                PBFootnote(text: "Auto-Save saves a single-photo Upscale result the moment it finishes, no Save tap needed (Batch already always saves per photo). Preserve Original always adds a new photo instead of overwriting the one you picked, undoing the overwrite-by-default behavior everywhere else in the app. Add to PixelBoost Album also files every save into a \"PixelBoost\" album in Photos, created the first time it's needed, so edited photos are easy to find as a set.")
 
                 PBSectionLabel(title: "Appearance")
                 PBCard {

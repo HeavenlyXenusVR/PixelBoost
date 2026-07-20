@@ -48,7 +48,7 @@ struct OnboardingView: View {
                 HStack(spacing: 6) {
                     ForEach(pages.indices, id: \.self) { index in
                         Capsule()
-                            .fill(index == page ? AnyShapeStyle(PBColor.accentGradient) : AnyShapeStyle(PBColor.surface3))
+                            .fill(index == page ? AnyShapeStyle(PBColor.accent) : AnyShapeStyle(PBColor.surface3))
                             .frame(width: index == page ? 18 : 6, height: 6)
                             .animation(.easeInOut(duration: 0.2), value: page)
                     }

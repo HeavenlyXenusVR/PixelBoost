@@ -117,9 +117,13 @@ struct RootView: View {
                 Text(tab.title)
                     .font(.system(size: 9.5, weight: .semibold))
                     .lineLimit(1)
+                Capsule()
+                    .fill(isSelected ? PBColor.accent : .clear)
+                    .frame(width: 14, height: 3)
             }
             .foregroundStyle(isSelected ? PBColor.accent : PBColor.inkDim)
             .padding(.vertical, 6)
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isSelected)
         }
         .buttonStyle(.plain)
     }

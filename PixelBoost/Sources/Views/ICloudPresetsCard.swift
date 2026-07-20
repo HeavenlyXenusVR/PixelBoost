@@ -47,7 +47,11 @@ struct ICloudPresetsCard: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(PBColor.accent)
                 .frame(width: 30, height: 30)
-                .background(PBColor.surface2, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .background(PBColor.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                )
             VStack(alignment: .leading, spacing: 1) {
                 Text(preset.name)
                     .font(.system(size: 15, weight: .semibold))

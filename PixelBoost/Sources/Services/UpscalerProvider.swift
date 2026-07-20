@@ -147,6 +147,7 @@ final class UpscalerProvider: ObservableObject {
     private static let sharpenAmountDefaultsKey = "com.pixelboost.sharpenAmount"
     private static let autoSaveEnabledDefaultsKey = "com.pixelboost.autoSaveEnabled"
     private static let preserveOriginalDefaultsKey = "com.pixelboost.preserveOriginal"
+    private static let addToAlbumEnabledDefaultsKey = "com.pixelboost.addToAlbumEnabled"
     private static let watermarkEnabledDefaultsKey = "com.pixelboost.watermarkEnabled"
     private static let watermarkTextDefaultsKey = "com.pixelboost.watermarkText"
     private static let watermarkPositionDefaultsKey = "com.pixelboost.watermarkPosition"
@@ -210,6 +211,13 @@ final class UpscalerProvider: ObservableObject {
     /// back. See `PhotoLibrarySaver`.
     @Published var preserveOriginal: Bool {
         didSet { UserDefaults.standard.set(preserveOriginal, forKey: Self.preserveOriginalDefaultsKey) }
+    }
+    /// When on (the default), every saved photo is also added to a
+    /// "PixelBoost" album in Photos — created on first use via
+    /// `PhotoAlbumService` — so upscaled/edited photos are easy to find as a
+    /// set instead of mixed into the Camera Roll with everything else.
+    @Published var addToAlbumEnabled: Bool {
+        didSet { UserDefaults.standard.set(addToAlbumEnabled, forKey: Self.addToAlbumEnabledDefaultsKey) }
     }
     @Published var watermarkEnabled: Bool {
         didSet { UserDefaults.standard.set(watermarkEnabled, forKey: Self.watermarkEnabledDefaultsKey) }
@@ -275,6 +283,7 @@ final class UpscalerProvider: ObservableObject {
         sharpenAmount = storedSharpen ?? 0
         autoSaveEnabled = UserDefaults.standard.bool(forKey: Self.autoSaveEnabledDefaultsKey)
         preserveOriginal = UserDefaults.standard.bool(forKey: Self.preserveOriginalDefaultsKey)
+        addToAlbumEnabled = (UserDefaults.standard.object(forKey: Self.addToAlbumEnabledDefaultsKey) as? Bool) ?? true
         watermarkEnabled = UserDefaults.standard.bool(forKey: Self.watermarkEnabledDefaultsKey)
         watermarkText = UserDefaults.standard.string(forKey: Self.watermarkTextDefaultsKey) ?? ""
         watermarkPosition = UserDefaults.standard.string(forKey: Self.watermarkPositionDefaultsKey)
