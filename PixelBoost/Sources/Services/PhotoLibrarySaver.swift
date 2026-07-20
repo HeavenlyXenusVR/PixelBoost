@@ -178,18 +178,13 @@ enum PhotoLibrarySaver {
         }
 
         let output = PHContentEditingOutput(contentEditingInput: input)
-        // Every real-world sample of this exact API sets adjustmentData on
-        // the output — describing (in an app-defined format) what edit
-        // produced the new render — and we didn't. The actual bytes here
-        // are never read back by anyone; its presence is what Apple's own
-        // reference pattern always pairs with a renderedContentURL write,
-        // and PHPhotosErrorMissingResource (error 3303) is thrown exactly
-        // where Photos tries to file the new resource in place of the old
-        // one, which not sending this may be leaving it unable to do.
-        output.adjustmentData = PHAdjustmentData(
-            formatIdentifier: "com.pixelboost.overwrite", formatVersion: "1.0",
-            data: Data("com.pixelboost.overwrite".utf8)
-        )
+        // v3.18.7 tried setting adjustmentData here (matching Apple's
+        // canonical sample pattern) to fix PHPhotosErrorMissingResource
+        // (3303) — on-device testing showed it didn't fix anything; it
+        // just swapped every failure to a *different* rejection
+        // (invalidResource, 3302), 100% consistently across both model
+        // choices and both screenshot and camera-photo sources. Reverted:
+        // whatever's actually wrong here isn't what that was addressing.
         do {
             try data.write(to: output.renderedContentURL, options: .atomic)
             try await PHPhotoLibrary.shared().performChanges {
