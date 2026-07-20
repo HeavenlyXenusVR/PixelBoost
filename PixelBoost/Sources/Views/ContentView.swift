@@ -290,7 +290,7 @@ struct ContentView: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [7, 6]))
-                    .foregroundStyle(PBColor.line)
+                    .foregroundStyle(PBColor.accent.opacity(0.4))
             )
         }
     }

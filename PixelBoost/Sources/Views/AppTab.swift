@@ -54,7 +54,13 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .overlays: return "textformat"
         case .erase: return "eraser"
         case .restore: return "bandage"
-        case .clone: return "stamp"
+        // Not "stamp" — that name doesn't resolve to a glyph on-device
+        // (renders as a blank icon; confirmed via a real screenshot, not
+        // just a lookup), even though it reads as valid in reference docs.
+        // "doc.on.doc" is proven to render correctly in this exact app
+        // already (ContentView's Copy action uses it) and reads reasonably
+        // as "duplicate/clone" in an icon-only grid context.
+        case .clone: return "doc.on.doc"
         case .batch: return "square.stack"
         case .cloud: return "icloud"
         case .history: return "clock.arrow.circlepath"

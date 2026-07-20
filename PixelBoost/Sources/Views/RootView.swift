@@ -163,38 +163,23 @@ struct RootView: View {
 }
 
 /// The "Tools" drawer sheet — a grid of every non-primary tab
-/// (`AppTab.moreTabs`), tap to select and dismiss.
+/// (`AppTab.moreTabs`), grouped into two labeled sections for scannability
+/// now that it's 10 items, tap to select and dismiss.
 private struct ToolsDrawerView: View {
     let selectedTab: AppTab
     let onSelect: (AppTab) -> Void
+
+    private static let editTools: [AppTab] = [.cutout, .enhance, .selective, .crop, .overlays, .erase, .restore, .clone]
+    private static let libraryTools: [AppTab] = [.cloud, .history]
 
     private let columns = [GridItem(.adaptive(minimum: 84), spacing: 14)]
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(AppTab.moreTabs) { tab in
-                        let isSelected = tab == selectedTab
-                        Button { onSelect(tab) } label: {
-                            VStack(spacing: 10) {
-                                Image(systemName: tab.systemImage)
-                                    .font(.system(size: 20, weight: .semibold))
-                                    .foregroundStyle(isSelected ? PBColor.accent : PBColor.ink)
-                                    .frame(width: 56, height: 56)
-                                    .pbGlassSurface(cornerRadius: 18)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                            .strokeBorder(isSelected ? PBColor.accent : .clear, lineWidth: 1.5)
-                                    )
-                                Text(tab.title)
-                                    .font(.system(size: 11.5, weight: .semibold))
-                                    .foregroundStyle(PBColor.inkDim)
-                                    .lineLimit(1)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
+                VStack(alignment: .leading, spacing: 22) {
+                    section(title: "Edit Tools", tabs: Self.editTools)
+                    section(title: "Library", tabs: Self.libraryTools)
                 }
                 .padding(20)
             }
@@ -204,6 +189,39 @@ private struct ToolsDrawerView: View {
             .toolbarBackground(PBColor.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
+    }
+
+    private func section(title: String, tabs: [AppTab]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            PBSectionLabel(title: title)
+            LazyVGrid(columns: columns, spacing: 16) {
+                ForEach(tabs) { tab in
+                    toolCell(tab)
+                }
+            }
+        }
+    }
+
+    private func toolCell(_ tab: AppTab) -> some View {
+        let isSelected = tab == selectedTab
+        return Button { onSelect(tab) } label: {
+            VStack(spacing: 10) {
+                Image(systemName: tab.systemImage)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(isSelected ? PBColor.accent : PBColor.ink)
+                    .frame(width: 56, height: 56)
+                    .pbGlassSurface(cornerRadius: 18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(isSelected ? PBColor.accent : .clear, lineWidth: 1.5)
+                    )
+                Text(tab.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(PBColor.inkDim)
+                    .lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
