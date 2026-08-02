@@ -6,13 +6,13 @@ import Foundation
 /// using `TabView`: 5 always-visible primary tabs (`primaryTabs`) plus a
 /// center "Tools" button opening a drawer sheet for the rest (`moreTabs`).
 enum AppTab: String, CaseIterable, Identifiable {
-    case home, cutout, enhance, adjust, selective, crop, filters, overlays, erase, restore, clone, batch, cloud, history, settings
+    case home, cutout, enhance, adjust, selective, crop, filters, pixelArt, scripted, overlays, erase, restore, clone, batch, cloud, history, settings
 
     var id: String { rawValue }
 
     /// The 5 tabs always visible in the bottom bar; everything else lives
     /// behind the center "Tools" button's drawer sheet (see `RootView`).
-    /// Still just a `Bool` split of the same 15 cases, not a separate type —
+    /// Still just a `Bool` split of the same cases, not a separate type —
     /// every tab keeps driving the same always-mounted `ZStack` in
     /// `RootView` regardless of which bucket it's in, so changing *how* a
     /// tab is reached never touches the state-preservation behavior that
@@ -31,6 +31,8 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .selective: return "Selective"
         case .crop: return "Crop"
         case .filters: return "Filters"
+        case .pixelArt: return "Pixel Art"
+        case .scripted: return "Scripted"
         case .overlays: return "Overlays"
         case .erase: return "Erase"
         case .restore: return "Restore"
@@ -51,6 +53,11 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .selective: return "paintbrush.pointed"
         case .crop: return "crop"
         case .filters: return "camera.filters"
+        case .pixelArt: return "square.grid.3x3.fill"
+        // Documented as an SF Symbol since iOS 13, but like every other
+        // icon choice in this app, not checked against a real device — see
+        // the `.clone` case above for why that check matters.
+        case .scripted: return "chevron.left.slash.chevron.right"
         case .overlays: return "textformat"
         case .erase: return "eraser"
         case .restore: return "bandage"

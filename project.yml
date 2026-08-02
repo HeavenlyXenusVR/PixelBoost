@@ -50,6 +50,15 @@ targets:
         excludes:
           - "*.md"
           - "convert/**"
+      # Vendored Lua 5.4 interpreter (MIT-licensed, see Vendor/Lua/README.md)
+      # backing the Scripted Filter tool's sandboxed `apply(r,g,b,a)` — a
+      # handful of plain C files, no external package manager involved.
+      # excludes: the .md/LICENSE docs sitting alongside the sources, same
+      # "Multiple commands produce" reasoning as the Models excludes above.
+      - path: Vendor/Lua
+        excludes:
+          - "*.md"
+          - "LICENSE"
     resources:
       - path: PixelBoost/Resources/Assets.xcassets
     settings:
@@ -59,6 +68,15 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
+        SWIFT_OBJC_BRIDGING_HEADER: PixelBoost/Sources/PixelBoost-Bridging-Header.h
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/Lua/include"
+        # Lua's own sources use old-style K&R-ish C with some patterns
+        # (implicit conversions, sign comparisons) that trip Swift/Xcode's
+        # stricter default warning set — never errors, just noisy, so
+        # dialed down for this one vendored library rather than upstream
+        # patched to satisfy a different toolchain's warning flags.
+        GCC_WARN_64_TO_32_BIT_CONVERSION: "NO"
+        CLANG_WARN_DOCUMENTATION_COMMENTS: "NO"
         # Empty by default — local/dev builds get no key, and ServerConfig.apiKey
         # falls back to nil (no Authorization header sent, matching a server
         # with no API key configured). CI overrides this on the xcodebuild

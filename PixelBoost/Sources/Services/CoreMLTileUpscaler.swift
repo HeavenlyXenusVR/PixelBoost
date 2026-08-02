@@ -1,5 +1,6 @@
 import CoreImage
 import CoreML
+import Foundation
 import UIKit
 import Vision
 
@@ -78,8 +79,40 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         // upright image — see UIImage+Tile.swift for why this matters.
         let normalized = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
 
-        var results: [(destOrigin: CGPoint, croppedOutput: UIImage)] = []
-        results.reserveCapacity(plan.tiles.count)
+        // Tiles are drawn straight into one shared bitmap context as each
+        // one finishes, instead of collecting every tile's cropped output
+        // in an array and stitching them all at the very end. A large
+        // photo can mean many dozens of tiles, each holding a full
+        // scaleFactor-sized UIImage/CGImage — retaining all of them
+        // simultaneously alongside the final full-size canvas roughly
+        // doubled peak memory right when it was already highest, which is
+        // exactly the shape of crash a long/large upscale would hit (see
+        // README's "no disk-based caching of intermediate tiles" known
+        // simplification — this doesn't remove that limitation, but it
+        // does stop needlessly holding two copies of the same data at once).
+        //
+        // A real `CGContext`, not `UIGraphicsBeginImageContextWithOptions`
+        // — that legacy API's "current context" lives on a per-thread
+        // stack, but Swift Concurrency doesn't guarantee this loop resumes
+        // on the same OS thread after each `await runModel(...)` below, so
+        // a later tile's draw could silently miss the context entirely (or
+        // land on the wrong thread's stack). A `CGContext` is just an
+        // object — holding a reference to it across suspension points and
+        // calling `draw` on it directly is thread-independent.
+        let outputWidth = Int(plan.outputSize.width)
+        let outputHeight = Int(plan.outputSize.height)
+        guard let canvas = CGContext(
+            data: nil, width: outputWidth, height: outputHeight, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { throw UpscaleError.renderFailed }
+        // CGContext's native origin is bottom-left with y pointing up;
+        // every tile's `destOrigin`/`keepRect` (from `ImageTiler`) is in
+        // the top-left/y-down convention the rest of this codebase uses
+        // (matching `UIImage.draw`/`UIGraphicsImageRenderer`). Flipping
+        // once up front means every tile below can use its destOrigin
+        // as-is instead of each draw call re-deriving a flipped rect.
+        canvas.translateBy(x: 0, y: CGFloat(outputHeight))
+        canvas.scaleBy(x: 1, y: -1)
 
         for (index, tile) in plan.tiles.enumerated() {
             try Task.checkCancellation()
@@ -93,32 +126,63 @@ final class CoreMLTileUpscaler: ImageUpscaling {
                 height: tile.keepRect.height * CGFloat(config.scaleFactor)
             )
             let croppedOutput = outputTile.cropped(to: keepScaled)
-            results.append((tile.destOrigin, croppedOutput))
+            guard let croppedCGImage = croppedOutput.cgImage else { throw UpscaleError.renderFailed }
+            canvas.draw(
+                croppedCGImage,
+                in: CGRect(origin: tile.destOrigin, size: CGSize(width: croppedCGImage.width, height: croppedCGImage.height))
+            )
             progress(Double(index + 1) / Double(plan.tiles.count))
         }
 
-        let stitched = Self.stitch(results, canvasSize: plan.outputSize)
+        guard let outputCGImage = canvas.makeImage() else { throw UpscaleError.renderFailed }
+        let stitched = UIImage(cgImage: outputCGImage, scale: 1, orientation: .up)
         return UpscaleResult(image: stitched, tileCount: plan.tiles.count)
     }
 
     private func runModel(on tile: UIImage) async throws -> UIImage {
         guard let cgTile = tile.cgImage else { throw UpscaleError.invalidImage }
         return try await withCheckedThrowingContinuation { continuation in
+            // VNImageRequestHandler.perform(_:) can itself throw the very
+            // same error it already delivered to a request's completion
+            // handler (Apple's documented behavior, not a bug on Vision's
+            // end) — without this guard, a tile that fails partway through
+            // inference resumes the continuation twice: once from the
+            // completion handler below, once more from the `catch` at the
+            // bottom. A second resume on an already-resumed
+            // CheckedContinuation is a fatal "SWIFT TASK CONTINUATION
+            // MISUSE" crash, not a recoverable error — this is the actual
+            // shape of "some images crash the app while upscaling" bug
+            // reports matched, since it only fires when a request fails
+            // (more likely the longer/larger a photo's tile run is).
+            let hasResumed = NSLock()
+            var didResume = false
+            func resumeOnce(_ result: Result<UIImage, Error>) {
+                hasResumed.lock()
+                let shouldResume = !didResume
+                didResume = true
+                hasResumed.unlock()
+                guard shouldResume else { return }
+                switch result {
+                case .success(let image): continuation.resume(returning: image)
+                case .failure(let error): continuation.resume(throwing: error)
+                }
+            }
+
             let request = VNCoreMLRequest(model: visionModel) { request, error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    resumeOnce(.failure(error))
                     return
                 }
                 guard let observation = request.results?.first as? VNPixelBufferObservation else {
-                    continuation.resume(throwing: UpscaleError.noModelOutput)
+                    resumeOnce(.failure(UpscaleError.noModelOutput))
                     return
                 }
                 let ciImage = CIImage(cvPixelBuffer: observation.pixelBuffer)
                 guard let rendered = Self.ciContext.createCGImage(ciImage, from: ciImage.extent) else {
-                    continuation.resume(throwing: UpscaleError.renderFailed)
+                    resumeOnce(.failure(UpscaleError.renderFailed))
                     return
                 }
-                continuation.resume(returning: UIImage(cgImage: rendered, scale: 1, orientation: .up))
+                resumeOnce(.success(UIImage(cgImage: rendered, scale: 1, orientation: .up)))
             }
             // Every tile is already exactly the model's expected input size
             // (see ImageTiler), so this is a no-op in practice — set anyway
@@ -145,21 +209,9 @@ final class CoreMLTileUpscaler: ImageUpscaling {
                     do {
                         try handler.perform([request])
                     } catch {
-                        continuation.resume(throwing: error)
+                        resumeOnce(.failure(error))
                     }
                 }
-            }
-        }
-    }
-
-    private static func stitch(_ tiles: [(destOrigin: CGPoint, croppedOutput: UIImage)], canvasSize: CGSize) -> UIImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
-        return renderer.image { _ in
-            for (origin, image) in tiles {
-                image.draw(at: origin)
             }
         }
     }
