@@ -116,7 +116,12 @@ final class CoreMLTileUpscaler: ImageUpscaling {
 
         for (index, tile) in plan.tiles.enumerated() {
             try Task.checkCancellation()
-            let inputTile = normalized.cropped(to: tile.sourceRect)
+            // Edge-replicated, not a plain `cropped(to:)` — a tile
+            // touching the photo's outer border needs its `overlap`-pixel
+            // margin to be real (if flat) context, not a hard transparent
+            // edge; see `croppedEdgeReplicated(to:)`'s doc comment for the
+            // measured dark/smudged-fringe defect this fixes.
+            let inputTile = normalized.croppedEdgeReplicated(to: tile.sourceRect)
             let outputTile = try await runModel(on: inputTile)
 
             let keepScaled = CGRect(

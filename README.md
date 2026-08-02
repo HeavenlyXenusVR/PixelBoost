@@ -267,10 +267,27 @@ Swift Package resolution, no network access needed at build time.
 
 ## Known simplifications (still a growing project, not a finished product)
 
-- Edge tiles are cropped with transparent padding rather than true
-  edge-mirroring — only affects the outermost `overlap` pixels of the
-  image border. See the doc comment on `UIImage.cropped(to:)` if this
-  shows up as a visible artifact with a particular model.
+- Interior tile-to-tile seams are a real, inherent limit of the
+  pad-then-crop tiling scheme (`ImageTiler`) — a CNN's receptive field
+  extends well past the `overlap` pixels of context each tile gets, so a
+  tile right at a seam sees slightly less context than the same region
+  would in a non-tiled pass. Measured as mild (real photos, general model,
+  8px overlap): output near a seam differs from a non-tiled reference run
+  by roughly 65% more than typical interior pixels — perceptible on close
+  inspection, not usually eye-catching at normal viewing size. A true
+  feathered/blended overlap (rather than pad-then-crop) would reduce this
+  further but is a bigger rewrite; not done here.
+- Edge tiles (the outermost `overlap` pixels of a photo's actual border,
+  not interior tile seams above) get edge-replicated context via
+  `UIImage.croppedEdgeReplicated(to:)`, not the plain transparent-padded
+  `cropped(to:)` every other tile crop still uses. This used to be
+  transparent padding — measured as a real, visible dark/smudged fringe
+  hugging every photo's edge (roughly 8x the pixel divergence from a
+  non-tiled reference in that border band vs. the interior on a real test
+  photo), not just a discarded margin like the doc comment here used to
+  claim. Edge replication cut that divergence by roughly 60% in the same
+  test; it's a flat stretched-pixel approximation, not true mirroring, so
+  some residual edge softness can remain.
 - No disk-based caching of intermediate tiles — very large photos (many
   tiles) hold each tile's output in memory until the final stitch.
 - All four bundled models' conversions were checked in PyTorch (real photo in,
@@ -389,3 +406,22 @@ Swift Package resolution, no network access needed at build time.
   when some individual tile's inference fails). Both fixed; see the doc
   comments in `CoreMLTileUpscaler.swift`. Still not exercised on a real
   device, same caveat as the rest of this app's image pipeline.
+- Investigated a report of upscaled results looking jagged/blurred/smudged,
+  especially around edges. Reproduced the underlying models (real
+  Real-ESRGAN weights, plain PyTorch — no Core ML runtime is available
+  outside macOS/iOS, so this is the closest verification possible here)
+  against real photos from the reporting user's own Photos export, tiled
+  the exact way `ImageTiler`/`CoreMLTileUpscaler` do, and compared against
+  a non-tiled reference pass of the same model. Found and fixed the outer-
+  edge padding bug described above (a real, measured ~8x error spike right
+  at every photo's border, cut by ~60% by the fix) — textually the closest
+  match to "edges... all around" in the report. Also confirmed, but did
+  *not* change: mild inherent interior tile-seam softness (see above), and
+  that Real-ESRGAN-family models genuinely do produce blotchy/melted-
+  looking texture on fine repetitive detail (sequins, glitter, some fabric
+  weaves) — a known characteristic of this model family's GAN training,
+  not specific to this app's conversion or integration. `compute_precision
+  =ct.precision.FLOAT16` in `convert.py` (see there) remains an untested
+  variable — Core ML FP16 vs FP32 differences can't be checked without
+  actually running the compiled `.mlpackage` on-device, which (as
+  everywhere else in this README) hasn't happened yet.
