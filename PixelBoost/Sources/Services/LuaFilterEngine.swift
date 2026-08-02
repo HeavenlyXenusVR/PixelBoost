@@ -78,7 +78,7 @@ final class LuaFilterEngine {
 
     deinit {
         if applyRef != LUA_NOREF {
-            luaL_unref(L, LUA_REGISTRYINDEX, applyRef)
+            luaL_unref(L, LUA_REGISTRYINDEX_SHIM, applyRef)
         }
         lua_close(L)
     }
@@ -111,7 +111,7 @@ final class LuaFilterEngine {
 
     private static let instructionHook: lua_Hook = { state, _ in
         if Date() > LuaFilterEngine.activeDeadline {
-            luaL_error(state, "exceeded time limit")
+            lua_error_shim(state, "exceeded time limit")
         }
     }
 
@@ -133,9 +133,9 @@ final class LuaFilterEngine {
             throw EngineError.missingApplyFunction
         }
         if applyRef != LUA_NOREF {
-            luaL_unref(L, LUA_REGISTRYINDEX, applyRef)
+            luaL_unref(L, LUA_REGISTRYINDEX_SHIM, applyRef)
         }
-        applyRef = luaL_ref(L, LUA_REGISTRYINDEX) // pops the function
+        applyRef = luaL_ref(L, LUA_REGISTRYINDEX_SHIM) // pops the function
     }
 
     /// Runs the compiled `apply(r, g, b, a)` (each 0...1) over every pixel
@@ -179,7 +179,7 @@ final class LuaFilterEngine {
             let b = Double(buffer[offset + 2]) / 255.0
             let a = Double(buffer[offset + 3]) / 255.0
 
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_Integer(applyRef))
+            lua_rawgeti(L, LUA_REGISTRYINDEX_SHIM, lua_Integer(applyRef))
             lua_pushnumber(L, r)
             lua_pushnumber(L, g)
             lua_pushnumber(L, b)
