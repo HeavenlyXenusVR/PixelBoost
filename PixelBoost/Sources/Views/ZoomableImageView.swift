@@ -2,13 +2,24 @@ import SwiftUI
 
 /// Full-screen pinch-to-zoom + pan + double-tap-to-zoom image viewer.
 struct ZoomableImageView: View {
-    let image: UIImage
+    /// Downsampled for display — see
+    /// `UIImage.downsampledForDisplay(maxDimension:)`'s doc comment; a
+    /// tens-of-megapixel upscale result handed straight to a live,
+    /// gesture-driven SwiftUI `Image` renders as torn/sliced bands on real
+    /// hardware. 4096 (not this view's own smaller `CompareSliderView`
+    /// cap) — up to 5x pinch zoom on top of "fit" means this view needs
+    /// real detail in reserve, not just enough to fill the screen once.
+    private let image: UIImage
     @Environment(\.dismiss) private var dismiss
 
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
+
+    init(image: UIImage) {
+        self.image = image.downsampledForDisplay(maxDimension: 4096)
+    }
 
     var body: some View {
         NavigationStack {

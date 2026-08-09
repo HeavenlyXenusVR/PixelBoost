@@ -9,8 +9,21 @@ import SwiftUI
 /// `.aspectRatio(.fit)` inside the same fixed frame lands them in the
 /// identical on-screen rect with no extra alignment math needed.
 struct CompareSliderView: View {
-    let before: UIImage
-    let after: UIImage
+    /// Downsampled copies for display only — see
+    /// `UIImage.downsampledForDisplay(maxDimension:)`'s doc comment for why
+    /// this view never renders the raw, potentially tens-of-megapixel
+    /// `before`/`after` images directly. This view only ever shows the
+    /// image at a fixed, modest on-screen height, so there's no zoom to
+    /// preserve extra detail for.
+    private let before: UIImage
+    private let after: UIImage
+
+    private static let maxDisplayDimension: CGFloat = 2048
+
+    init(before: UIImage, after: UIImage) {
+        self.before = before.downsampledForDisplay(maxDimension: Self.maxDisplayDimension)
+        self.after = after.downsampledForDisplay(maxDimension: Self.maxDisplayDimension)
+    }
 
     @State private var dividerFraction: CGFloat = 0.5
 
