@@ -58,7 +58,24 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         guard let url = Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") else {
             throw UpscaleError.modelNotBundled(modelName)
         }
-        let mlModel = try MLModel(contentsOf: url)
+        // .cpuAndGPU, not the .all default. Diagnosis, not yet confirmed on
+        // real hardware (see Models/README.md): these conversions were
+        // never runtime-validated before shipping, and exported images
+        // reportedly come out torn into repeating horizontal bands on some
+        // runs and correct on others, same model/input, with nothing
+        // random anywhere in ImageTiler or this file's own compositing —
+        // that non-determinism points at the runtime, not this code. This
+        // exact architecture shape (RRDBNet's dense-block concatenations +
+        // F.interpolate-based nearest-neighbor upsampling, run once per
+        // 128x128 tile) matches a known class of Core ML bug where the
+        // Neural Engine miscompiles part of a graph like this while
+        // CPU/GPU execution of the identical graph is correct. Forcing
+        // .cpuAndGPU rules the ANE out; if the corruption persists after
+        // this change, the cause is elsewhere and this should be reverted
+        // (it costs real speed with no upside otherwise).
+        let modelConfig = MLModelConfiguration()
+        modelConfig.computeUnits = .cpuAndGPU
+        let mlModel = try MLModel(contentsOf: url, configuration: modelConfig)
         self.visionModel = try VNCoreMLModel(for: mlModel)
         self.modelName = modelName
         self.config = config

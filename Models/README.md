@@ -23,9 +23,19 @@ rather than picking one of these by fixed default.
 shapes, and the underlying PyTorch model + weights were checked separately
 for each (ran the un-converted model on a real crop, got a plausible
 sharper/higher-res result, no NaNs) — but none of the compiled Core ML
-models have been run on-device or in Xcode's simulator, since that requires
-macOS. Build and try them on a real photo before trusting the output; if
-something looks wrong, that's the first place to look.
+models have been run on-device or in Xcode's simulator by this change,
+since that requires macOS. If exported images come out sharp on some runs
+and torn into repeating horizontal bands on others (same model, same
+input — nothing in this pipeline is otherwise randomized), that symptom
+matches a known Core ML issue where the Neural Engine miscompiles part of
+a graph shaped like this one (dense-block concatenations +
+`F.interpolate`-based nearest-neighbor upsampling, repeated per tile),
+while CPU/GPU execution of the identical graph is correct.
+`CoreMLTileUpscaler` now loads every model with
+`MLModelConfiguration.computeUnits = .cpuAndGPU` to rule the ANE out —
+slower per tile, but this is the first thing to revert-and-test if that
+diagnosis turns out wrong, and the first thing to double check hasn't
+regressed if the symptom ever comes back.
 
 **Performance:** the general model (23 RRDB blocks) is the highest-quality
 but heaviest config — test on a physical device, not the simulator. The
