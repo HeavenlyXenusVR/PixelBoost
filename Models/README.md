@@ -26,32 +26,35 @@ sharper/higher-res result, no NaNs) — but none of the compiled Core ML
 models have been run on-device or in Xcode's simulator by this change,
 since that requires macOS.
 
-**Ongoing corruption investigation — two separate bugs found so far, at
-least one still unresolved:**
+**Corruption investigation — two separate bugs found, chased down to
+compositing code:**
 
 1. The in-app compare/zoom preview handing a full-resolution result (a 4x
    upscale of a modern phone photo easily clears 50MP) straight to a live
    SwiftUI `Image` tears into repeating horizontal bands on real hardware
    — a display-only artifact, fixed by `UIImage.downsampledForDisplay` in
-   `PixelBoost/Sources/Services/UIImage+Display.swift`. Confirmed this was
-   real but **not the whole story**: a saved/exported file (watermark
-   already baked in by `Watermark.apply`, so this is genuinely
-   post-pipeline output, not a preview) sent from a real iPhone 13 showed
-   the same torn-band corruption, meaning the actual pixel data written to
-   Photos can be corrupted too, independent of how it's later displayed.
-2. `MLModelConfiguration.computeUnits = .cpuAndGPU` (Neural Engine
-   excluded, GPU/Metal still allowed) was tried first, on the theory this
-   was an ANE miscompilation. The corrupted-file report above showed up
-   even so — so ANE was never actually the (sole) cause, only ruled out on
-   its own; GPU/Metal execution of this converted graph was never actually
-   isolated. Currently forcing `.cpuOnly` (see `CoreMLTileUpscaler.init`)
-   to finally test that. This is a diagnostic, not a shipped fix: pure-CPU
-   inference is real-time-hostile for a multi-dozen-tile photo, so if this
-   turns out to be the actual cause, the long-term fix needs to be a
-   specific GPU-path workaround, not permanently disabling GPU/ANE.
-   If corruption persists even under `.cpuOnly`, the compute backend isn't
-   the cause at all — look at the conversion pipeline (`convert/`) itself
-   next, not the runtime.
+   `PixelBoost/Sources/Services/UIImage+Display.swift`. Real, but **not
+   the whole story**: a saved/exported file (watermark already baked in
+   by `Watermark.apply`, so genuinely post-pipeline output, not a
+   preview) sent from a real iPhone 13 showed the same torn-band
+   corruption — the actual pixel data written to Photos was corrupted
+   too, independent of #1.
+2. For #1's leftover corruption: tried excluding the Neural Engine
+   (`.cpuAndGPU`, v3.22.1), then excluding GPU too (`.cpuOnly`, v3.22.3),
+   on the theory this was a compute-backend miscompilation. A real-device
+   A/B of the same photo on both builds produced **pixel-identical**
+   corrupted output — proof the bug is fully deterministic and has
+   nothing to do with which backend runs the model. That pointed at
+   `CoreMLTileUpscaler`'s own tile-stitching code, specifically the
+   version (introduced alongside the Pixel Art/Lua tools, never verified
+   on hardware) that drew each tile directly into one shared `CGContext`
+   with a hand-rolled `translateBy`/`scaleBy` coordinate flip instead of
+   the original `UIGraphicsImageRenderer`-based stitch. Reverted back to
+   the `UIGraphicsImageRenderer` approach — it was correct before that
+   rewrite and never itself implicated by any report. Needs on-device
+   confirmation; if corruption somehow persists even after this, the
+   conversion pipeline (`convert/`) is the next thing to check, not
+   anything runtime/compositing-related, since both are now ruled out.
 
 **Performance:** the general model (23 RRDB blocks) is the highest-quality
 but heaviest config — test on a physical device, not the simulator. The

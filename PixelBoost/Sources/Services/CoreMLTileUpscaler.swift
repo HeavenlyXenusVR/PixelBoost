@@ -58,26 +58,16 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         guard let url = Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") else {
             throw UpscaleError.modelNotBundled(modelName)
         }
-        // .cpuOnly — diagnostic, not a permanent fix. v3.22.1 tried
-        // .cpuAndGPU (Neural Engine excluded, GPU/Metal still allowed) on
-        // the theory this was an ANE miscompilation; a real-device retest
-        // (iPhone 13) showed the exported file itself still corrupted —
-        // torn into repeating horizontal bands, watermark baked in, not a
-        // preview-rendering artifact — so GPU (Metal) was never actually
-        // ruled out, only ANE was. This forces CPU-only execution to
-        // finally isolate whether *any* on-device compute backend is at
-        // fault. Slow (a 128x128 tile that runs in a blink on GPU/ANE can
-        // take real time on CPU, times dozens of tiles per photo) — if the
-        // corruption is gone with this, the bug is confirmed to be a
-        // GPU/Metal compute-backend artifact in this converted graph, and
-        // this should stay until a non-GPU root cause is found or worked
-        // around. If corruption persists even here, the compute backend
-        // isn't the cause at all and this should come back out — the next
-        // place to look is the conversion pipeline itself (Models/convert),
-        // not the runtime.
-        let modelConfig = MLModelConfiguration()
-        modelConfig.computeUnits = .cpuOnly
-        let mlModel = try MLModel(contentsOf: url, configuration: modelConfig)
+        // Default (.all) compute units — a real-device A/B test proved the
+        // corruption reported below is 100% independent of compute
+        // backend: a CPU-only run (v3.22.3) produced pixel-identical
+        // corrupted output to an earlier .cpuAndGPU run (v3.22.1) of the
+        // same photo. That rules out GPU/ANE/any hardware race entirely —
+        // the bug is fully deterministic, so it has to be in this file's
+        // own tile-compositing code (see `upscale(_:progress:)` below) or
+        // the model conversion, not the runtime. No reason to keep paying
+        // CPU-only's real speed cost once the backend was cleared.
+        let mlModel = try MLModel(contentsOf: url)
         self.visionModel = try VNCoreMLModel(for: mlModel)
         self.modelName = modelName
         self.config = config
@@ -98,40 +88,26 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         // upright image — see UIImage+Tile.swift for why this matters.
         let normalized = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
 
-        // Tiles are drawn straight into one shared bitmap context as each
-        // one finishes, instead of collecting every tile's cropped output
-        // in an array and stitching them all at the very end. A large
-        // photo can mean many dozens of tiles, each holding a full
-        // scaleFactor-sized UIImage/CGImage — retaining all of them
-        // simultaneously alongside the final full-size canvas roughly
-        // doubled peak memory right when it was already highest, which is
-        // exactly the shape of crash a long/large upscale would hit (see
-        // README's "no disk-based caching of intermediate tiles" known
-        // simplification — this doesn't remove that limitation, but it
-        // does stop needlessly holding two copies of the same data at once).
-        //
-        // A real `CGContext`, not `UIGraphicsBeginImageContextWithOptions`
-        // — that legacy API's "current context" lives on a per-thread
-        // stack, but Swift Concurrency doesn't guarantee this loop resumes
-        // on the same OS thread after each `await runModel(...)` below, so
-        // a later tile's draw could silently miss the context entirely (or
-        // land on the wrong thread's stack). A `CGContext` is just an
-        // object — holding a reference to it across suspension points and
-        // calling `draw` on it directly is thread-independent.
-        let outputWidth = Int(plan.outputSize.width)
-        let outputHeight = Int(plan.outputSize.height)
-        guard let canvas = CGContext(
-            data: nil, width: outputWidth, height: outputHeight, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { throw UpscaleError.renderFailed }
-        // CGContext's native origin is bottom-left with y pointing up;
-        // every tile's `destOrigin`/`keepRect` (from `ImageTiler`) is in
-        // the top-left/y-down convention the rest of this codebase uses
-        // (matching `UIImage.draw`/`UIGraphicsImageRenderer`). Flipping
-        // once up front means every tile below can use its destOrigin
-        // as-is instead of each draw call re-deriving a flipped rect.
-        canvas.translateBy(x: 0, y: CGFloat(outputHeight))
-        canvas.scaleBy(x: 1, y: -1)
+        // Collected in memory and stitched via UIGraphicsImageRenderer once
+        // every tile is done, NOT drawn incrementally into one shared
+        // CGContext with a manual bottom-left-to-top-left coordinate flip
+        // (translateBy/scaleBy) — that manual-flip version shipped without
+        // ever running on real hardware and was the actual source of a
+        // reported export corruption bug (torn into repeating horizontal
+        // bands — every tile row landing at a subtly wrong Y). A real
+        // device A/B test proved the corruption was 100% deterministic and
+        // independent of compute backend (CPU-only vs GPU+ANE gave
+        // pixel-identical corrupted output), which rules out a hardware
+        // race and points squarely at this file's own compositing math.
+        // UIGraphicsImageRenderer/UIImage.draw(at:) handle the coordinate
+        // system entirely internally — no hand-rolled CTM flip to get
+        // subtly wrong — at the cost of holding every tile's cropped
+        // output in memory simultaneously until the final stitch (the
+        // original, deliberate memory/crash tradeoff this was rewritten
+        // away from; see README's "no disk-based caching of intermediate
+        // tiles" known simplification).
+        var results: [(destOrigin: CGPoint, croppedOutput: UIImage)] = []
+        results.reserveCapacity(plan.tiles.count)
 
         for (index, tile) in plan.tiles.enumerated() {
             try Task.checkCancellation()
@@ -150,17 +126,24 @@ final class CoreMLTileUpscaler: ImageUpscaling {
                 height: tile.keepRect.height * CGFloat(config.scaleFactor)
             )
             let croppedOutput = outputTile.cropped(to: keepScaled)
-            guard let croppedCGImage = croppedOutput.cgImage else { throw UpscaleError.renderFailed }
-            canvas.draw(
-                croppedCGImage,
-                in: CGRect(origin: tile.destOrigin, size: CGSize(width: croppedCGImage.width, height: croppedCGImage.height))
-            )
+            results.append((tile.destOrigin, croppedOutput))
             progress(Double(index + 1) / Double(plan.tiles.count))
         }
 
-        guard let outputCGImage = canvas.makeImage() else { throw UpscaleError.renderFailed }
-        let stitched = UIImage(cgImage: outputCGImage, scale: 1, orientation: .up)
+        let stitched = Self.stitch(results, canvasSize: plan.outputSize)
         return UpscaleResult(image: stitched, tileCount: plan.tiles.count)
+    }
+
+    private static func stitch(_ tiles: [(destOrigin: CGPoint, croppedOutput: UIImage)], canvasSize: CGSize) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
+        return renderer.image { _ in
+            for (origin, image) in tiles {
+                image.draw(at: origin)
+            }
+        }
     }
 
     private func runModel(on tile: UIImage) async throws -> UIImage {
