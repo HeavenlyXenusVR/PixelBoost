@@ -26,19 +26,32 @@ sharper/higher-res result, no NaNs) — but none of the compiled Core ML
 models have been run on-device or in Xcode's simulator by this change,
 since that requires macOS.
 
-A first real-device report described exported images coming out torn
-into repeating horizontal bands. That turned out to be a display-only
-bug, not a model/tiling problem — see `UIImage.downsampledForDisplay`
-in `PixelBoost/Sources/Services/UIImage+Display.swift`: the compare/zoom
-views were handing a full-resolution result (a 4x upscale of a modern
-phone photo easily clears 50MP) straight to a live SwiftUI `Image`, which
-tears exactly like that on real hardware. Forcing
-`MLModelConfiguration.computeUnits = .cpuAndGPU` (excluding the Neural
-Engine) was tried first as a plausible Core ML runtime explanation and
-confirmed on-device *not* to fix it, so that change was reverted — model
-loading is back to the `.all` default. If a genuinely new corruption
-report shows up, don't re-reach for the ANE explanation first; it's
-already been ruled out once.
+**Ongoing corruption investigation — two separate bugs found so far, at
+least one still unresolved:**
+
+1. The in-app compare/zoom preview handing a full-resolution result (a 4x
+   upscale of a modern phone photo easily clears 50MP) straight to a live
+   SwiftUI `Image` tears into repeating horizontal bands on real hardware
+   — a display-only artifact, fixed by `UIImage.downsampledForDisplay` in
+   `PixelBoost/Sources/Services/UIImage+Display.swift`. Confirmed this was
+   real but **not the whole story**: a saved/exported file (watermark
+   already baked in by `Watermark.apply`, so this is genuinely
+   post-pipeline output, not a preview) sent from a real iPhone 13 showed
+   the same torn-band corruption, meaning the actual pixel data written to
+   Photos can be corrupted too, independent of how it's later displayed.
+2. `MLModelConfiguration.computeUnits = .cpuAndGPU` (Neural Engine
+   excluded, GPU/Metal still allowed) was tried first, on the theory this
+   was an ANE miscompilation. The corrupted-file report above showed up
+   even so — so ANE was never actually the (sole) cause, only ruled out on
+   its own; GPU/Metal execution of this converted graph was never actually
+   isolated. Currently forcing `.cpuOnly` (see `CoreMLTileUpscaler.init`)
+   to finally test that. This is a diagnostic, not a shipped fix: pure-CPU
+   inference is real-time-hostile for a multi-dozen-tile photo, so if this
+   turns out to be the actual cause, the long-term fix needs to be a
+   specific GPU-path workaround, not permanently disabling GPU/ANE.
+   If corruption persists even under `.cpuOnly`, the compute backend isn't
+   the cause at all — look at the conversion pipeline (`convert/`) itself
+   next, not the runtime.
 
 **Performance:** the general model (23 RRDB blocks) is the highest-quality
 but heaviest config — test on a physical device, not the simulator. The

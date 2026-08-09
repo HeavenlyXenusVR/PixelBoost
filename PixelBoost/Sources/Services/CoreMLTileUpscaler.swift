@@ -58,7 +58,26 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         guard let url = Bundle.main.url(forResource: modelName, withExtension: "mlmodelc") else {
             throw UpscaleError.modelNotBundled(modelName)
         }
-        let mlModel = try MLModel(contentsOf: url)
+        // .cpuOnly — diagnostic, not a permanent fix. v3.22.1 tried
+        // .cpuAndGPU (Neural Engine excluded, GPU/Metal still allowed) on
+        // the theory this was an ANE miscompilation; a real-device retest
+        // (iPhone 13) showed the exported file itself still corrupted —
+        // torn into repeating horizontal bands, watermark baked in, not a
+        // preview-rendering artifact — so GPU (Metal) was never actually
+        // ruled out, only ANE was. This forces CPU-only execution to
+        // finally isolate whether *any* on-device compute backend is at
+        // fault. Slow (a 128x128 tile that runs in a blink on GPU/ANE can
+        // take real time on CPU, times dozens of tiles per photo) — if the
+        // corruption is gone with this, the bug is confirmed to be a
+        // GPU/Metal compute-backend artifact in this converted graph, and
+        // this should stay until a non-GPU root cause is found or worked
+        // around. If corruption persists even here, the compute backend
+        // isn't the cause at all and this should come back out — the next
+        // place to look is the conversion pipeline itself (Models/convert),
+        // not the runtime.
+        let modelConfig = MLModelConfiguration()
+        modelConfig.computeUnits = .cpuOnly
+        let mlModel = try MLModel(contentsOf: url, configuration: modelConfig)
         self.visionModel = try VNCoreMLModel(for: mlModel)
         self.modelName = modelName
         self.config = config
