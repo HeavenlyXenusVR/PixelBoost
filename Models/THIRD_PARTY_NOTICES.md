@@ -501,3 +501,47 @@ folder to reproduce or adapt.
 Fetched directly from the upstream repo's `LICENSE` file at conversion time
 (`https://raw.githubusercontent.com/cszn/BSRGAN/main/LICENSE`) — re-verify
 it hasn't changed if you re-convert from a newer checkpoint.
+
+## Real-CUGAN (RealCUGAN.mlmodel)
+
+`RealCUGAN.mlmodel` is a Core ML conversion of `up4x-latest-no-denoise.pth`
+from [bilibili/ailab](https://github.com/bilibili/ailab/tree/main/Real-CUGAN)
+— a from-scratch U-Net architecture (not RRDBNet, unlike the other five
+models here), trained specifically on anime/illustration-style art. Clean
+line structure with noticeably less over-smoothing than waifu2x on
+toon-shaded/cel-shaded content — the look a Blender NPR/toon-shader render
+or stylized flat-shaded 3D scene tends to share with hand-drawn anime art,
+this app's "Toon / Cel-Shaded Render" model choice. Converted with
+[`convert.py --arch realcugan`](convert/convert.py), which loads the
+`.pth` weights into a from-scratch PyTorch reimplementation of `UpCunet4x`
+([`convert/realcugan_arch.py`](convert/realcugan_arch.py) — reduced to only
+the original's `tile_mode==0` single-pass path, since PixelBoost's own
+`ImageTiler` already handles external tiling; the original's other
+`tile_mode` branches implement the model's own internal whole-image
+chunking loop, irrelevant here) — see that folder to reproduce or adapt.
+
+MIT License
+
+Copyright (c) 2022 bilibili
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Fetched directly from the upstream repo's `LICENSE` file at conversion time
+(`https://raw.githubusercontent.com/bilibili/ailab/main/Real-CUGAN/LICENSE`)
+— re-verify it hasn't changed if you re-convert from a newer checkpoint.

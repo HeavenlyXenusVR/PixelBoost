@@ -10,19 +10,23 @@ custom presets — see "Logging & cloud features" below.
 **Requires iOS 17** — Remove Background (Cutout) uses Vision's
 `VNGenerateForegroundInstanceMaskRequest`, which iOS 16 doesn't have.
 
-Ships with five real converted super-resolution models (see
+Ships with six real converted super-resolution models (see
 [`Models/README.md`](Models/README.md)) — Real-ESRGAN's general-photo
 `x4plus`, anime/illustration-optimized `anime_6B`, low-artifact portrait
 `RealESRNet_x4plus`, and the fast/lightweight `realesr-general-x4v3` (all
-BSD-3-Clause), plus BSRGAN (Apache-2.0) for 3D/CG renders specifically —
-same RRDBNet family, trained on a much harsher synthetic degradation
-pipeline so it's more robust on a genuinely noisy/degraded render than a
-model trained assuming a clean real photo — plus a plain Lanczos-resampling
-fallback (`LanczosUpscaler`) so the app still works if a model is ever
-missing/swapped out. An Auto mode runs every bundled model (now five) on
+BSD-3-Clause), plus two models aimed at 3D/CG renders specifically rather
+than real photos: BSRGAN (Apache-2.0) — same RRDBNet family as the four
+above, trained on a much harsher synthetic degradation pipeline so it's
+more robust on a genuinely noisy/degraded render than a model trained
+assuming a clean real photo — and Real-CUGAN (MIT) — a different
+architecture entirely (a from-scratch U-Net, not RRDBNet), trained on
+anime/illustration art, for a toon/cel-shaded/NPR-style render's clean
+line structure — plus a plain Lanczos-resampling fallback
+(`LanczosUpscaler`) so the app still works if a model is ever
+missing/swapped out. An Auto mode runs every bundled model (now six) on
 the *full* photo and shows every result so you can compare and pick the
 one you like, rather than a heuristic quietly deciding for you — see
-"Compare Models" below. A sixth model (Apache-2.0, converted from Intel
+"Compare Models" below. A seventh model (Apache-2.0, converted from Intel
 Open Image Denoise) backs the separate **Render Denoise** tab for cleaning
 up 3D-render noise — see "Render Denoise" below and
 [`Models/README.md`](Models/README.md).
@@ -180,11 +184,12 @@ up 3D-render noise — see "Render Denoise" below and
   Applies to every save — single photo, batch, and Compare Models' "Save
   All."
 - **Model & quality picker** (Settings) — Auto, General Photo, Anime /
-  Illustration, Portrait, Fast & Clean, and 3D / CG Render models (the last
-  one, BSRGAN, is tuned for a 3D/Blender render rather than a real photo —
-  see [`Models/README.md`](Models/README.md)), plus Fast (Lanczos,
-  instant) / Standard / Best (Core ML, trading tile-seam quality for speed
-  via context overlap).
+  Illustration, Portrait, Fast & Clean, 3D / CG Render (BSRGAN — a
+  3D/Blender render rather than a real photo), and Toon / Cel-Shaded
+  Render (Real-CUGAN — a stylized/flat-shaded render or NPR toon-shader
+  output specifically, see [`Models/README.md`](Models/README.md)), plus
+  Fast (Lanczos, instant) / Standard / Best (Core ML, trading tile-seam
+  quality for speed via context overlap).
 - **Custom presets** — name your own model+overlap combination beyond the
   built-in three; server-backed (needs a server configured).
 - **iCloud presets** — the same named model+overlap combinations, but
@@ -374,6 +379,20 @@ Swift Package resolution, no network access needed at build time.
   used the `neuralnetwork` conversion backend workaround (see Render
   Denoise above) — noticeably larger than the other four models (~64MB vs
   ~33MB) as a result, since that backend has no FP16 option.
+- Real-CUGAN, same Auto-mode-behavior-change caveat as BSRGAN just above
+  (now a sixth candidate, not a fifth) — plus its own conversion needed
+  two real changes from the original architecture, not just a copy: only
+  the original's `tile_mode==0` single-pass path was ported (the other
+  branches are the model's *own* internal whole-image tiling loop,
+  redundant with — and not traceable alongside — PixelBoost's own
+  `ImageTiler`), and several `F.pad(..., negative)` "crop via negative
+  padding" calls were rewritten as plain slicing, since coremltools'
+  `pad` op rejects negative values outright. Verified the rewrite changes
+  nothing (bit-identical output on a test tile, checked before ever
+  touching the Core ML conversion) — see `Models/convert/README.md` for
+  the full explanation — but it's a more invasive port than any other
+  model here, worth knowing if Toon / Cel-Shaded Render's output ever
+  looks wrong in a way the other models' outputs don't.
 - Background Replace (part of Cutout) is seven curated fills — solid
   colors, two gradients, a blurred copy of the original photo — not a
   generative model that invents a plausible new scene behind the subject.

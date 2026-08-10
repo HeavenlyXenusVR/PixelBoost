@@ -95,6 +95,73 @@ below (this was, in fact, the case here); omit `--backend` entirely (the
 install for a `.mlpackage` with FP16 weights instead — noticeably smaller
 than this repo's current ~64MB FP32 `.mlmodel`.
 
+## Converting Real-CUGAN (the "Toon / Cel-Shaded Render" upscale model)
+
+Reproduces `../RealCUGAN.mlmodel` — also via `convert.py`, `--arch
+realcugan`, but unlike BSRGAN this one is genuinely a different
+architecture (a from-scratch U-Net, not RRDBNet — `realcugan_arch.py`),
+not just a differently-named checkpoint of the same math:
+
+```bash
+mkdir -p realcugan_weights
+curl -sL -o realcugan_weights/updated_weights.zip \
+    "https://github.com/bilibili/ailab/releases/download/Real-CUGAN/updated_weights.zip"
+unzip realcugan_weights/updated_weights.zip -d realcugan_weights
+
+python3 convert.py --weights realcugan_weights/updated_weights/up4x-latest-no-denoise.pth \
+    --arch realcugan --out RealCUGAN.mlpackage \
+    --description "Real-CUGAN up4x (no-denoise)" --attribution "MIT, github.com/bilibili/ailab"
+```
+
+(`up4x-latest-no-denoise.pth` specifically, not `-conservative` or
+`-denoise3x` — this app already has its own separate Denoise Before
+Upscale toggle in Settings, so the base upscale model shouldn't also be
+baking in its own fixed denoise strength on top of that.)
+
+`realcugan_arch.py` is a from-scratch PyTorch reimplementation of
+`upcunet_v3.py`'s `UpCunet4x` (`bilibili/ailab`, MIT) — `SEBlock`/
+`UNetConv`/`UNet1`/`UNet2` copied over essentially verbatim (only the
+training-only `kaiming_normal_` init loops stripped), but `UpCunet4x`
+itself needed two real changes, not just a copy:
+
+1. **Only the `tile_mode==0` forward path is ported.** The original
+   `forward()` branches on a `tile_mode` argument — `tile_mode==0` is a
+   single, straightforward pass over the whole input; `tile_mode>=1`
+   implements the model's *own* internal chunking loop (crop into patches,
+   run each, stitch back), meant for handling an arbitrarily large image
+   in one Python call without exhausting GPU memory. That's irrelevant
+   here — PixelBoost's `ImageTiler`/`CoreMLTileUpscaler` already do
+   external fixed-128px-tile splitting — and the chunking branches'
+   dynamic, data-dependent loop structure wouldn't trace/convert to Core
+   ML cleanly anyway.
+2. **Fixed-size input, and negative-padding calls rewritten as slicing.**
+   The original computes its padding target (`ph`/`pw`) from the input
+   tensor's own runtime shape — necessary for arbitrary image sizes, but
+   coremltools' int-cast op can't handle that non-constant scalar
+   arithmetic during tracing. Since PixelBoost only ever feeds this a
+   fixed 128x128 tile (already even), `ph == h0` and `pw == w0` hold
+   trivially, so the padding math was replaced with the constant it always
+   evaluates to. Separately, several internal crop steps use PyTorch's
+   `F.pad(x, (-n, -n, -n, -n))` idiom (negative padding = crop) — valid
+   PyTorch, but coremltools' `pad` op raises outright on a negative value.
+   Replaced with equivalent plain slicing (`x[:, :, n:-n, n:-n]`, see
+   `_crop()`). Verified this rewrite changes nothing: ran the original
+   negative-`F.pad` version and the sliced version on an identical test
+   tile and confirmed bit-identical output before touching the conversion
+   pipeline at all.
+
+Same "no wrapper key" checkpoint format as BSRGAN (see above) — plain
+`torch.load()` gives the state_dict directly — except Real-CUGAN's "pro"
+variant checkpoints also carry an extra non-tensor `"pro"` marker key
+alongside the real weights (see `bilibili/ailab`'s own
+`RealWaifuUpScaler`); `convert.py` strips it if present, though the
+`no-denoise` weights used here don't actually have it.
+
+Same `.mlmodel`-not-`.mlpackage` caveat as BSRGAN and OIDN (below) applies
+here too if reproducing in an environment with the same
+`libmilstoragepython` limitation — pass `--backend neuralnetwork --out
+RealCUGAN.mlmodel` in that case.
+
 ## Converting the Render Denoise model (OIDN)
 
 Separate from the four Real-ESRGAN models above — reproduces

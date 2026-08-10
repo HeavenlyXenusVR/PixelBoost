@@ -17,6 +17,7 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
     case portrait
     case lowLight
     case render3D
+    case stylizedRender
     case textDocument
 
     var id: String { rawValue }
@@ -29,6 +30,7 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
         case .portrait: return "Portrait"
         case .lowLight: return "Fast & Clean"
         case .render3D: return "3D / CG Render"
+        case .stylizedRender: return "Toon / Cel-Shaded Render"
         case .textDocument: return "Text & Documents"
         }
     }
@@ -57,6 +59,16 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
         // model trained assuming "clean" source images. See
         // Models/README.md.
         case .render3D: return "BSRGAN"
+        // Real-CUGAN (up4x, no-denoise): a from-scratch U-Net (not
+        // RRDBNet), trained specifically on anime/illustration-style art —
+        // clean line structure with noticeably less over-smoothing than
+        // waifu2x on toon-shaded/cel-shaded content, the look a Blender
+        // NPR/toon-shader render or stylized 2D-flat 3D scene tends to
+        // share with hand-drawn anime art. Distinct from Anime/
+        // Illustration above (Real-ESRGAN's anime_6B, a photographic GAN
+        // trained on a broader illustration mix) — this one specifically
+        // targets clean-line toon/cel content. See Models/README.md.
+        case .stylizedRender: return "RealCUGAN"
         case .textDocument: return "RealESRGANText"
         }
     }

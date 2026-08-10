@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from bsrgan_arch import RRDBNet as BSRGANRRDBNet
+from realcugan_arch import UpCunet4x
 from rrdbnet import RRDBNet
 from srvgg_arch import SRVGGNetCompact
 
@@ -37,9 +38,10 @@ def main():
     parser = argparse.ArgumentParser(description="Convert a Real-ESRGAN checkpoint (RRDBNet or SRVGGNetCompact) to Core ML.")
     parser.add_argument("--weights", default="RealESRGAN_x4plus.pth", help="Path to the .pth checkpoint")
     parser.add_argument(
-        "--arch", default="rrdbnet", choices=["rrdbnet", "srvgg", "bsrgan"],
+        "--arch", default="rrdbnet", choices=["rrdbnet", "srvgg", "bsrgan", "realcugan"],
         help="rrdbnet (x4plus/anime_6B/RealESRNet_x4plus), srvgg (realesr-general-x4v3 and friends), "
-             "or bsrgan (BSRGAN.pth — same RRDBNet math, older layer-naming convention, see bsrgan_arch.py)"
+             "bsrgan (BSRGAN.pth — same RRDBNet math, older layer-naming convention, see bsrgan_arch.py), "
+             "or realcugan (up4x-latest-*.pth — a different U-Net architecture entirely, see realcugan_arch.py)"
     )
     parser.add_argument("--num-block", type=int, default=23, help="RRDBNet num_block (23 for x4plus/RealESRNet, 6 for anime_6B)")
     parser.add_argument("--num-conv", type=int, default=32, help="SRVGGNetCompact num_conv (32 for general-x4v3, 16 for animevideov3)")
@@ -62,15 +64,21 @@ def main():
         base = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=args.num_block, num_grow_ch=32)
     elif args.arch == "bsrgan":
         base = BSRGANRRDBNet(in_nc=3, out_nc=3, nf=64, nb=args.num_block, gc=32, sf=4)
+    elif args.arch == "realcugan":
+        base = UpCunet4x(in_channels=3, out_channels=3)
     else:
         base = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=args.num_conv, upscale=4, act_type="prelu")
 
     state = torch.load(args.weights, map_location="cpu", weights_only=True)
-    if args.arch == "bsrgan":
-        # BSRGAN.pth is the bare state_dict, not wrapped under a
-        # "params"/"params_ema" key the way xinntao's checkpoints are (see
-        # cszn/BSRGAN's own main_test_bsrgan.py: plain
-        # `model.load_state_dict(torch.load(model_path), strict=True)`).
+    if args.arch in ("bsrgan", "realcugan"):
+        # Both BSRGAN.pth and up4x-latest-*.pth are the bare state_dict, not
+        # wrapped under a "params"/"params_ema" key the way xinntao's
+        # checkpoints are. Real-CUGAN's "pro" variant checkpoints also carry
+        # an extra non-tensor "pro" marker key alongside the real weights
+        # (see bilibili/ailab's RealWaifuUpScaler) — the up4x-latest-*.pth
+        # release weights used here don't have it, but strip it if present
+        # so load_state_dict(strict=True) doesn't choke on an unexpected key.
+        state.pop("pro", None)
         base.load_state_dict(state)
     else:
         # RRDBNet checkpoints store the EMA'd weights under "params_ema";
