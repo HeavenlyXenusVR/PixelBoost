@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Sheet for choosing the upscale model — replaces the old inline Settings
-/// `Picker` now that there are 6 options instead of 2 (see
+/// `Picker` now that there are 7 options instead of 2 (see
 /// `UpscaleModelChoice`). Auto is pinned to the top and marked recommended;
 /// not-yet-bundled models are shown honestly rather than hidden, matching
 /// the app's existing "not bundled" degrade-to-Lanczos behavior.
@@ -122,6 +122,7 @@ private struct ModelCard: View {
         case .anime: return "paintpalette"
         case .portrait: return "person.crop.square"
         case .lowLight: return "hare"
+        case .render3D: return "cube"
         case .textDocument: return "doc.text"
         }
     }
@@ -133,6 +134,7 @@ private struct ModelCard: View {
         case .anime: return "Real-ESRGAN anime_6B"
         case .portrait: return "RealESRNet_x4plus — smoother, fewer artifacts on skin"
         case .lowLight: return "realesr-general-x4v3 — smaller & quicker everyday default"
+        case .render3D: return "BSRGAN — for a 3D/Blender render, not a real photo"
         case .textDocument: return "Crisp edges on type"
         }
     }

@@ -10,18 +10,22 @@ custom presets — see "Logging & cloud features" below.
 **Requires iOS 17** — Remove Background (Cutout) uses Vision's
 `VNGenerateForegroundInstanceMaskRequest`, which iOS 16 doesn't have.
 
-Ships with four real converted super-resolution models (all BSD-3-Clause, see
+Ships with five real converted super-resolution models (see
 [`Models/README.md`](Models/README.md)) — Real-ESRGAN's general-photo
 `x4plus`, anime/illustration-optimized `anime_6B`, low-artifact portrait
-`RealESRNet_x4plus`, and the fast/lightweight `realesr-general-x4v3` — plus
-a plain Lanczos-resampling fallback (`LanczosUpscaler`) so the app still
-works if a model is ever missing/swapped out. An Auto mode runs every
-bundled model on the *full* photo and shows every result so you can
-compare and pick the one you like, rather than a heuristic quietly
-deciding for you — see "Compare Models" below. A fifth model (Apache-2.0,
-converted from Intel Open Image Denoise) backs the separate **Render
-Denoise** tab for cleaning up 3D-render noise — see "Render Denoise" below
-and [`Models/README.md`](Models/README.md).
+`RealESRNet_x4plus`, and the fast/lightweight `realesr-general-x4v3` (all
+BSD-3-Clause), plus BSRGAN (Apache-2.0) for 3D/CG renders specifically —
+same RRDBNet family, trained on a much harsher synthetic degradation
+pipeline so it's more robust on a genuinely noisy/degraded render than a
+model trained assuming a clean real photo — plus a plain Lanczos-resampling
+fallback (`LanczosUpscaler`) so the app still works if a model is ever
+missing/swapped out. An Auto mode runs every bundled model (now five) on
+the *full* photo and shows every result so you can compare and pick the
+one you like, rather than a heuristic quietly deciding for you — see
+"Compare Models" below. A sixth model (Apache-2.0, converted from Intel
+Open Image Denoise) backs the separate **Render Denoise** tab for cleaning
+up 3D-render noise — see "Render Denoise" below and
+[`Models/README.md`](Models/README.md).
 
 ---
 
@@ -176,7 +180,9 @@ and [`Models/README.md`](Models/README.md).
   Applies to every save — single photo, batch, and Compare Models' "Save
   All."
 - **Model & quality picker** (Settings) — Auto, General Photo, Anime /
-  Illustration, Portrait, and Fast & Clean models, plus Fast (Lanczos,
+  Illustration, Portrait, Fast & Clean, and 3D / CG Render models (the last
+  one, BSRGAN, is tuned for a 3D/Blender render rather than a real photo —
+  see [`Models/README.md`](Models/README.md)), plus Fast (Lanczos,
   instant) / Standard / Best (Core ML, trading tile-seam quality for speed
   via context overlap).
 - **Custom presets** — name your own model+overlap combination beyond the
@@ -354,6 +360,20 @@ Swift Package resolution, no network access needed at build time.
   only — the underlying model has no adjustable parameter, so unlike
   Restore there's no slider to back off if it's too aggressive on a given
   image.
+- Adding BSRGAN as a fifth Auto-mode candidate is a real behavior change
+  for every user, not just those upscaling 3D renders — Auto (and Compare
+  Models) now run one more model per photo (slower), and BSRGAN's
+  sharpness score could in principle win the comparison on an ordinary
+  real photo too, not just a render, since the auto-pick heuristic is
+  content-agnostic (a crop-sharpness test, not a render-vs-photo
+  classifier). Not necessarily wrong — BSRGAN is a genuinely capable
+  general upscaler, not a novelty model that only works on renders — but
+  worth knowing if Auto's pick or timing changes after this update. Same
+  "sanity-checked in PyTorch, not on the actual compiled `.mlmodel`, never
+  run in Xcode/on a device" caveat as every other model here, and it also
+  used the `neuralnetwork` conversion backend workaround (see Render
+  Denoise above) — noticeably larger than the other four models (~64MB vs
+  ~33MB) as a result, since that backend has no FP16 option.
 - Background Replace (part of Cutout) is seven curated fills — solid
   colors, two gradients, a blurred copy of the original photo — not a
   generative model that invents a plausible new scene behind the subject.

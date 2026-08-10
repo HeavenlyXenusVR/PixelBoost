@@ -1,6 +1,8 @@
 # Converting Real-ESRGAN to Core ML
 
-Reproduces all four `../*.mlpackage` files. Requires Python 3.11
+Reproduces the four Real-ESRGAN `../*.mlpackage` files (BSRGAN — a fifth
+`convert.py` architecture — and the separate Render Denoise/OIDN model each
+have their own section further below). Requires Python 3.11
 (coremltools 9.0 at time of writing doesn't yet support 3.13) and works on
 Linux or macOS — only the final `.mlpackage` → `.mlmodelc` compile step
 needs Xcode. Tested with `torch==2.7.0` specifically (coremltools 9.0's
@@ -63,6 +65,35 @@ incoming 0-255 image down to the `[0,1]` range the model expects, and the
 wrapper clamps + multiplies the model's output back up to `[0,255]` before
 it's declared as an output `ImageType` — so the compiled model takes and
 returns plain images with no manual normalization needed on the Swift side.
+
+## Converting BSRGAN (the "3D / CG Render" upscale model)
+
+Reproduces `../BSRGAN.mlmodel` — same `convert.py` as the four Real-ESRGAN
+models above, via its `--arch bsrgan` option, since BSRGAN is the same
+RRDBNet math (just an older layer-naming convention checkpoint — see
+`bsrgan_arch.py`'s doc comment):
+
+```bash
+# Weights from the official release (Apache-2.0, see ../THIRD_PARTY_NOTICES.md)
+curl -sL https://github.com/cszn/KAIR/releases/download/v1.0/BSRGAN.pth -o BSRGAN.pth
+
+python3 convert.py --weights BSRGAN.pth --arch bsrgan --num-block 23 \
+    --out BSRGAN.mlpackage --description "BSRGAN x4" \
+    --attribution "Apache-2.0, github.com/cszn/BSRGAN"
+```
+
+BSRGAN.pth's checkpoint is the bare `state_dict` (no `"params"`/
+`"params_ema"` wrapper key, unlike the xinntao checkpoints) — `convert.py`
+detects `--arch bsrgan` and loads it directly, see that file.
+
+**Produced as a `.mlmodel`, not `.mlpackage`, in this repo's actual commit**
+— pass `--backend neuralnetwork --out BSRGAN.mlmodel` instead of the
+command above if reproducing in an environment with the same
+`libmilstoragepython`-missing limitation described in the OIDN section
+below (this was, in fact, the case here); omit `--backend` entirely (the
+`mlprogram` default, shown above) on a machine with a complete coremltools
+install for a `.mlpackage` with FP16 weights instead — noticeably smaller
+than this repo's current ~64MB FP32 `.mlmodel`.
 
 ## Converting the Render Denoise model (OIDN)
 

@@ -14,11 +14,34 @@ script, two supported architectures).
 | `RealESRNet.mlpackage` | `RealESRNet_x4plus.pth` | RRDBNet, 23 blocks | Portraits — same architecture/data as x4plus but trained with only L1 loss (no GAN), so it's smoother and less prone to over-sharpened/ringing artifacts on skin |
 | `RealESRGeneralV3.mlpackage` | `realesr-general-x4v3.pth` | SRVGGNetCompact, 32 conv layers | Everyday quick default — much smaller/faster than any RRDBNet model, cleaner result on typical real-world photos |
 
+A fifth super-resolution model targets a different source-image class —
+3D/CG renders rather than real photos:
+
+| File | Source | Architecture | Best for |
+|---|---|---|---|
+| `BSRGAN.mlmodel` | `BSRGAN.pth` | RRDBNet, 23 blocks (BSRGAN's own layer naming — see `convert/bsrgan_arch.py`) | 3D/Blender renders (Cycles/Eevee/any path tracer), especially a low-sample-count or lossily-compressed one — trained on a much broader/harsher synthetic degradation pipeline than the other four models, so more robust on genuinely degraded source than a model trained assuming clean bicubic-downsampled input |
+
+Selectable as "3D / CG Render" in the model picker (`UpscaleModelChoice.render3D`)
+and included in `Auto`'s every-model comparison like the other four —
+Apache-2.0, see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Same
+`convert.py` reused via `--arch bsrgan` (see "Swapping in a different
+model" below), but like `OIDNRenderDenoise.mlmodel`, this conversion
+environment's coremltools lacked `libmilstoragepython`, so it's a
+`.mlmodel` (legacy `neuralnetwork` backend) rather than `.mlpackage` — see
+that model's own note below and `Models/convert/README.md` for the full
+explanation. Noticeably larger than the other RRDBNet models (~64MB vs
+~33MB) since the `neuralnetwork` backend embeds weights as FP32 with no
+FP16 option, unlike `mlprogram`'s `compute_precision=FLOAT16`. Sanity-
+checked the same way as the other four (a real crop through the
+un-converted PyTorch model, correct 4x output shape, no NaNs, plausible
+value range) — like every model here, **the actual compiled `.mlmodel` has
+not been run in Xcode/on-device**.
+
 `Auto` (see `UpscalerProvider.autoSelectModel`) tests every bundled model
 above against a crop of the photo and keeps whichever scores sharper,
 rather than picking one of these by fixed default.
 
-A fifth model, `OIDNRenderDenoise.mlmodel`, backs the separate **Render
+A sixth model, `OIDNRenderDenoise.mlmodel`, backs the separate **Render
 Denoise** tab (not part of Upscale/Auto above — it denoises in place, it
 doesn't super-resolve):
 

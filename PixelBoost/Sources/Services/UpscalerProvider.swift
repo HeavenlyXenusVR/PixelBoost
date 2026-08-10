@@ -16,6 +16,7 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
     case anime
     case portrait
     case lowLight
+    case render3D
     case textDocument
 
     var id: String { rawValue }
@@ -27,6 +28,7 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
         case .anime: return "Anime / Illustration"
         case .portrait: return "Portrait"
         case .lowLight: return "Fast & Clean"
+        case .render3D: return "3D / CG Render"
         case .textDocument: return "Text & Documents"
         }
     }
@@ -47,6 +49,14 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
         // blocks) built for everyday real-world photos — quicker per tile
         // with a cleaner, lower-artifact result than the heavier models.
         case .lowLight: return "RealESRGeneralV3"
+        // BSRGAN: same RRDBNet architecture as General Photo, but trained
+        // on a much broader/harsher synthetic degradation pipeline (mixed
+        // blur kernels, noise, JPEG artifacts, sensor patterns) rather than
+        // clean bicubic downsampling — more robust on a render exported at
+        // a low sample count or through a lossy render-farm JPEG than a
+        // model trained assuming "clean" source images. See
+        // Models/README.md.
+        case .render3D: return "BSRGAN"
         case .textDocument: return "RealESRGANText"
         }
     }
