@@ -187,6 +187,10 @@ final class UpscalerViewModel: ObservableObject {
             } else {
                 Haptics.success()
             }
+            ActionLoggingService.log("compare_models", detail: [
+                "candidate_count": candidates.count,
+                "result_count": results.count,
+            ])
         }
     }
 
@@ -214,9 +218,11 @@ final class UpscalerViewModel: ObservableObject {
                 let cutout = try await BackgroundRemovalService.removeBackground(from: workingImage)
                 self.resultImage = cutout
                 Haptics.success()
+                ActionLoggingService.log("cutout", detail: ["outcome": "success"])
             } catch {
                 self.errorMessage = error.localizedDescription
                 Haptics.error()
+                ActionLoggingService.log("cutout", detail: ["outcome": "failed", "error": error.localizedDescription])
             }
             self.isRemovingBackground = false
         }

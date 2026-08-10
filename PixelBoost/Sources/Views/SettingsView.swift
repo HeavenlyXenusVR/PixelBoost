@@ -122,6 +122,9 @@ struct SettingsView: View {
                     .tint(PBColor.accent)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
+                    .onChange(of: hapticsEnabled) { _, newValue in
+                        ActionLoggingService.log("settings_change", detail: ["setting": "haptics_enabled", "value": newValue])
+                    }
                 }
 
                 PBSectionLabel(title: "Upscaler-Bridge Server")
@@ -141,7 +144,7 @@ struct SettingsView: View {
                             .foregroundStyle(PBColor.ink)
                     }
                 }
-                PBFootnote(text: "Optional. If set, every upscale (success or failure) is logged here — source image size, technique/model used, tile config, timing. Leave the URL empty to disable logging entirely. Release builds from CI have a key baked in automatically; leave the API key field blank to use that default, or set one here to override it. See server/README.md in the repo for how to deploy one.")
+                PBFootnote(text: "Optional. If set, every upscale (success or failure) is logged here — source image size, technique/model used, tile config, timing — along with a few other actions (Compare Models, Cutout, Settings changes) for usage stats. Your photos are never included in this logging; a photo only ever reaches the server if you separately tap \"Backup to Cloud\" on a result. Leave the URL empty to disable all of this logging entirely. Release builds from CI have a key baked in automatically; leave the API key field blank to use that default, or set one here to override it. See server/README.md in the repo for how to deploy one.")
 
                 PBSectionLabel(title: "Backup & Restore")
                 PBCard {
@@ -202,7 +205,10 @@ struct SettingsView: View {
     private var qualityRow: some View {
         Menu {
             ForEach(UpscaleQuality.allCases) { quality in
-                Button(quality.displayName) { provider.quality = quality }
+                Button(quality.displayName) {
+                    provider.quality = quality
+                    ActionLoggingService.log("settings_change", detail: ["setting": "quality", "value": quality.displayName])
+                }
             }
         } label: {
             PBCardRow(icon: "dial.medium", label: "Quality", value: "\(provider.quality.displayName) ›")
