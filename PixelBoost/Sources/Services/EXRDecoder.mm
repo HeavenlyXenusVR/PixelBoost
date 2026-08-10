@@ -175,4 +175,24 @@ UIImage *_Nullable makeImage(const std::vector<uint8_t> &pixels, int width, int 
     return makeImage(pixels, width, height, outError);
 }
 
++ (nullable UIImage *)decodeEXRMaskAtPath:(NSString *)path error:(NSString * _Nullable * _Nullable)outError {
+    float *rawRGBA = nullptr;
+    int width = 0;
+    int height = 0;
+    if (!loadRawEXR(path, &rawRGBA, &width, &height, outError)) { return nil; }
+
+    size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+    std::vector<uint8_t> pixels(pixelCount * 4);
+    for (size_t i = 0; i < pixelCount; i++) {
+        float v = rawRGBA[i * 4];  // R channel — single-channel pass, replicated across RGB by LoadEXR
+        uint8_t value = static_cast<uint8_t>(std::lround(std::max(0.0f, std::min(1.0f, v)) * 255.0f));
+        uint8_t *dst = &pixels[i * 4];
+        dst[0] = dst[1] = dst[2] = value;
+        dst[3] = 255;
+    }
+    free(rawRGBA);
+
+    return makeImage(pixels, width, height, outError);
+}
+
 @end

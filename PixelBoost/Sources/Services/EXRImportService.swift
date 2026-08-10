@@ -44,6 +44,17 @@ enum EXRImportService {
         }
         return image
     }
+
+    /// A companion Ambient Occlusion (or other already-0...1) pass — see
+    /// `EXRDecoder.decodeEXRMask(atPath:error:)`'s doc comment. Used by
+    /// `AOBlendService`.
+    static func loadMaskImage(from url: URL) throws -> UIImage {
+        var errorMessage: NSString?
+        guard let image = EXRDecoder.decodeEXRMask(atPath: url.path, error: &errorMessage) else {
+            throw ImportError.decodeFailed((errorMessage as String?) ?? "Unknown error")
+        }
+        return image
+    }
 }
 
 /// Settings-backed default tonemap for EXR import — a plain `AppStorage`-

@@ -6,7 +6,7 @@ import Foundation
 /// using `TabView`: 5 always-visible primary tabs (`primaryTabs`) plus a
 /// center "Tools" button opening a drawer sheet for the rest (`moreTabs`).
 enum AppTab: String, CaseIterable, Identifiable {
-    case home, cutout, enhance, adjust, selective, crop, filters, pixelArt, scripted, overlays, erase, restore, renderDenoise, normalMap, seamlessTexture, depthFog, clone, batch, cloud, history, settings
+    case home, cutout, enhance, adjust, selective, crop, filters, pixelArt, scripted, overlays, erase, restore, renderDenoise, normalMap, seamlessTexture, depthFog, aoBlend, lut, clone, batch, cloud, history, settings
 
     var id: String { rawValue }
 
@@ -40,6 +40,8 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .normalMap: return "Normal Map"
         case .seamlessTexture: return "Seamless Texture"
         case .depthFog: return "Depth Fog"
+        case .aoBlend: return "AO Blend"
+        case .lut: return "LUT"
         case .clone: return "Clone"
         case .batch: return "Batch"
         case .cloud: return "Cloud"
@@ -69,6 +71,8 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .normalMap: return "arrow.up.arrow.down.square"
         case .seamlessTexture: return "square.grid.3x3"
         case .depthFog: return "cloud.fog"
+        case .aoBlend: return "cube"
+        case .lut: return "square.stack.3d.up"
         // Not "stamp" — that name doesn't resolve to a glyph on-device
         // (renders as a blank icon; confirmed via a real screenshot, not
         // just a lookup), even though it reads as valid in reference docs.

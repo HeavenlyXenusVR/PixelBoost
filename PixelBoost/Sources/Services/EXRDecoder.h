@@ -34,6 +34,13 @@ typedef NS_ENUM(NSInteger, EXRTonemap) {
 /// by `DepthFogService` for depth-based fog/blur compositing.
 + (nullable UIImage *)decodeEXRDepthAtPath:(NSString *)path error:(NSString * _Nullable * _Nullable)outError;
 
+/// Loads a single-channel EXR pass that's *already* a proper 0...1 mask —
+/// an Ambient Occlusion pass, a cavity pass, any render-engine output
+/// that's already normalized the way a depth/Z pass explicitly isn't. Just
+/// clamp+scale, no min-max renormalization or near/far inversion. Used by
+/// `AOBlendService`.
++ (nullable UIImage *)decodeEXRMaskAtPath:(NSString *)path error:(NSString * _Nullable * _Nullable)outError;
+
 @end
 
 NS_ASSUME_NONNULL_END
