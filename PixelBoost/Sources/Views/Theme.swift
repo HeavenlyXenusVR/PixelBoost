@@ -52,6 +52,22 @@ enum PBColor {
     )
 }
 
+/// `RootView`'s bottom tab bar is a plain SwiftUI view pinned on with
+/// `.safeAreaInset`, not a real `UITabBarController` — so unlike a native
+/// tab bar, UIKit has no idea it's there. Every tab's content sits inside
+/// its own `NavigationStack` (see `RootView.tabContent`), and a
+/// `NavigationStack` bridges to a real `UINavigationController` under the
+/// hood: its safe area is computed by UIKit from actual system chrome
+/// (status bar, nav bar, home indicator) and does NOT inherit a SwiftUI
+/// ancestor's `.safeAreaInset` from *outside* that UIKit boundary. The
+/// result: `List`/`ScrollView` content inside any tab scrolls its last
+/// items right under the custom bar instead of stopping above it. Fix is
+/// for each tab's own content (inside its `NavigationStack`) to reserve
+/// this space itself via `.pbReserveTabBarSpace()`.
+enum PBLayout {
+    static let bottomBarHeight: CGFloat = 64
+}
+
 /// One shared type scale replacing the ad hoc `.font(.system(size:weight:))`
 /// literals that used to be hand-picked and repeated at each call site.
 enum PBFont {
@@ -112,6 +128,17 @@ extension View {
                 .strokeBorder(PBColor.accent, lineWidth: lineWidth)
         )
         .shadow(color: PBColor.accent.opacity(0.32), radius: 12, x: 0, y: 0)
+    }
+
+    /// Reserves space for `RootView`'s custom bottom tab bar — see
+    /// `PBLayout` doc comment for why this can't just be inherited from an
+    /// ancestor `.safeAreaInset`. Apply to the scrollable content INSIDE
+    /// each tab's own `NavigationStack` (e.g. the `ScrollView`/`List`/`Form`
+    /// itself), not to the `NavigationStack` from outside.
+    func pbReserveTabBarSpace() -> some View {
+        safeAreaInset(edge: .bottom) {
+            Color.clear.frame(height: PBLayout.bottomBarHeight)
+        }
     }
 }
 

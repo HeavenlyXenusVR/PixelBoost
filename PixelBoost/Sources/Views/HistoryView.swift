@@ -42,6 +42,7 @@ struct HistoryView: View {
                 .scrollContentBackground(.hidden)
             }
         }
+        .pbReserveTabBarSpace()
         .background(PBColor.background.ignoresSafeArea())
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)

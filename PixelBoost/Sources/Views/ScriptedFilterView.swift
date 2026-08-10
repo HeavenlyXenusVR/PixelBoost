@@ -122,6 +122,7 @@ struct ScriptedFilterView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Scripted Filter")
             .navigationBarTitleDisplayMode(.inline)

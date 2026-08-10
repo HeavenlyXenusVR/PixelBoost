@@ -123,6 +123,7 @@ struct InpaintView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Erase")
             .navigationBarTitleDisplayMode(.inline)

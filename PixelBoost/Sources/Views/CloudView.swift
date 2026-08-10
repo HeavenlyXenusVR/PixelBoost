@@ -45,6 +45,7 @@ struct CloudView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .pbReserveTabBarSpace()
         .background(PBColor.background.ignoresSafeArea())
         .navigationTitle("Cloud Storage")
         .navigationBarTitleDisplayMode(.inline)

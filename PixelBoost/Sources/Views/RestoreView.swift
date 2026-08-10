@@ -78,6 +78,7 @@ struct RestoreView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Restore")
             .navigationBarTitleDisplayMode(.inline)

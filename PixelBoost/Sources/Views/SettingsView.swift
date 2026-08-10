@@ -179,6 +179,7 @@ struct SettingsView: View {
             }
             .padding(16)
         }
+        .pbReserveTabBarSpace()
         .background(PBColor.background.ignoresSafeArea())
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)

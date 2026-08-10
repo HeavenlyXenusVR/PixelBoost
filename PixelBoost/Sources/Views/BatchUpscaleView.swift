@@ -64,6 +64,7 @@ struct BatchUpscaleView: View {
             }
             .padding(16)
         }
+        .pbReserveTabBarSpace()
         .background(PBColor.background.ignoresSafeArea())
         .navigationTitle("Batch Upscale")
         .navigationBarTitleDisplayMode(.inline)

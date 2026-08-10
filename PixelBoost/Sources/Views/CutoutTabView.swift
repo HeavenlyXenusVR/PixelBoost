@@ -71,6 +71,7 @@ struct CutoutTabView: View {
                 }
                 .padding(20)
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Cutout")
             .navigationBarTitleDisplayMode(.inline)

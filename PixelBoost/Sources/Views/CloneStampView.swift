@@ -157,6 +157,7 @@ struct CloneStampView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Clone Stamp")
             .navigationBarTitleDisplayMode(.inline)

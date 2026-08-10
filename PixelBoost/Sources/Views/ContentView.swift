@@ -143,6 +143,7 @@ struct ContentView: View {
                 }
                 .padding(16)
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("PixelBoost")
             .toolbarBackground(PBColor.background, for: .navigationBar)

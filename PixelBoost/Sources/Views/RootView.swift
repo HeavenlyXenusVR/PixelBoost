@@ -100,7 +100,7 @@ struct RootView: View {
             }
         }
         .padding(.horizontal, 4)
-        .frame(height: 64)
+        .frame(height: PBLayout.bottomBarHeight)
         .background(.ultraThinMaterial)
         .overlay(alignment: .top) {
             Rectangle().fill(PBColor.line).frame(height: 1)

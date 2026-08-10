@@ -68,6 +68,7 @@ struct AutoEnhanceView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Enhance")
             .navigationBarTitleDisplayMode(.inline)

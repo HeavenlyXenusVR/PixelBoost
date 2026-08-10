@@ -70,6 +70,7 @@ struct AdjustmentsView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Adjust")
             .navigationBarTitleDisplayMode(.inline)

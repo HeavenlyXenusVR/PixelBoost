@@ -73,6 +73,7 @@ struct CropRotateView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Crop & Rotate")
             .navigationBarTitleDisplayMode(.inline)

@@ -71,6 +71,7 @@ struct PixelArtView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Pixel Art")
             .navigationBarTitleDisplayMode(.inline)

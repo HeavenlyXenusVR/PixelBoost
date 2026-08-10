@@ -131,6 +131,7 @@ struct SelectiveAdjustView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Selective")
             .navigationBarTitleDisplayMode(.inline)

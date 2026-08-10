@@ -71,6 +71,7 @@ struct OverlaysView: View {
                     emptyState
                 }
             }
+            .pbReserveTabBarSpace()
             .background(PBColor.background.ignoresSafeArea())
             .navigationTitle("Overlays")
             .navigationBarTitleDisplayMode(.inline)
