@@ -5,6 +5,7 @@ struct SettingsView: View {
     @AppStorage(ServerConfig.baseURLDefaultsKey) private var serverURLString: String = ServerConfig.defaultBaseURLString
     @AppStorage(ServerConfig.apiKeyDefaultsKey) private var apiKeyString: String = ""
     @AppStorage(Haptics.enabledDefaultsKey) private var hapticsEnabled: Bool = true
+    @AppStorage(EXRTonemapPreference.defaultsKey) private var exrTonemapRawValue: Int = EXRTonemap.reinhard.rawValue
     @State private var backupRestoreMessage: String?
     @State private var isPresentingModelPicker = false
 
@@ -48,6 +49,12 @@ struct SettingsView: View {
                     }
                 }
                 PBFootnote(text: "Auto keeps a photo's transparency if it has any (a Cutout result, say) by saving as PNG, and uses JPEG otherwise — pick HEIC or JPEG to force a specific format (both lose any transparency), or PNG to always keep it lossless. Applies to every save, single photo or batch.")
+
+                PBSectionLabel(title: "EXR Import")
+                PBCard {
+                    exrTonemapRow
+                }
+                PBFootnote(text: "How an imported EXR's scene-linear HDR is converted to a normal display-referred photo. Reinhard is a neutral, cheap default; Filmic rolls off highlights more gradually and lands closer to what Blender's Filmic/AgX view transforms show in the viewport.")
 
                 PBSectionLabel(title: "Watermark")
                 PBCard {
@@ -212,6 +219,21 @@ struct SettingsView: View {
             }
         } label: {
             PBCardRow(icon: "dial.medium", label: "Quality", value: "\(provider.quality.displayName) ›")
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var exrTonemapRow: some View {
+        let current = EXRTonemap(rawValue: exrTonemapRawValue) ?? .reinhard
+        return Menu {
+            ForEach([EXRTonemap.reinhard, EXRTonemap.filmic], id: \.rawValue) { tonemap in
+                Button(tonemap.displayName) {
+                    exrTonemapRawValue = tonemap.rawValue
+                    ActionLoggingService.log("settings_change", detail: ["setting": "exr_tonemap", "value": tonemap.displayName])
+                }
+            }
+        } label: {
+            PBCardRow(icon: "cube", label: "Tonemap", value: "\(current.displayName) ›")
         }
         .buttonStyle(.plain)
     }

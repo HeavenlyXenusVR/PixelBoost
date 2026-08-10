@@ -1,9 +1,12 @@
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct BatchUpscaleView: View {
     @StateObject private var viewModel: BatchUpscaleViewModel
     @State private var pickerItems: [PhotosPickerItem] = []
+    @State private var isPresentingEXRImporter = false
+    @State private var exrImportErrorMessage: String?
 
     /// `provider` is passed in explicitly from the parent (which reads it
     /// via @EnvironmentObject) rather than this view reading environment
@@ -31,6 +34,19 @@ struct BatchUpscaleView: View {
                     .onChange(of: pickerItems) { _, newValue in
                         viewModel.setSelection(newValue)
                     }
+
+                    PBRowDivider()
+                    // EXR isn't a Photos asset — same reasoning as
+                    // ContentView's single-photo "Import EXR" button, just
+                    // multi-select here since this is a queue.
+                    Button {
+                        Haptics.lightImpact()
+                        isPresentingEXRImporter = true
+                    } label: {
+                        PBCardRow(icon: "cube", label: "Add EXR Files")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.isRunning)
 
                     if !viewModel.items.isEmpty {
                         PBRowDivider()
@@ -70,6 +86,26 @@ struct BatchUpscaleView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(PBColor.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        .fileImporter(
+            isPresented: $isPresentingEXRImporter,
+            allowedContentTypes: [UTType(filenameExtension: "exr") ?? .data],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                viewModel.addEXRFiles(urls)
+            case .failure(let error):
+                exrImportErrorMessage = error.localizedDescription
+            }
+        }
+        .alert("Add EXR Files", isPresented: Binding(
+            get: { exrImportErrorMessage != nil },
+            set: { isPresented in if !isPresented { exrImportErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exrImportErrorMessage ?? "")
+        }
         .preferredColorScheme(.dark)
     }
 

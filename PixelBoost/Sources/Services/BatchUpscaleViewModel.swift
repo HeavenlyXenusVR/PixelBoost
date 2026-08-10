@@ -11,9 +11,22 @@ final class BatchUpscaleViewModel: ObservableObject {
         case failed(String)
     }
 
+    /// A queued item can come from Photos (the original, common path) or
+    /// from a directly-picked EXR file (`addEXRFiles` — EXR isn't a Photos
+    /// asset, same reasoning as ContentView's separate "Import EXR"
+    /// button). `.preloadedImage` decodes eagerly at selection time rather
+    /// than lazily at process time — an EXR file's security-scoped Files
+    /// access is simplest to use once, right when the user picks it,
+    /// rather than re-opened per queue item possibly minutes later once
+    /// the batch actually reaches it.
+    enum ItemSource {
+        case photo(PhotosPickerItem)
+        case preloadedImage(UIImage, name: String)
+    }
+
     struct Item: Identifiable {
         let id = UUID()
-        let pickerItem: PhotosPickerItem
+        let source: ItemSource
         var status: ItemStatus = .pending
     }
 
@@ -27,9 +40,34 @@ final class BatchUpscaleViewModel: ObservableObject {
         self.provider = provider
     }
 
+    /// Replaces every `.photo`-sourced item with the current Photos
+    /// selection (matching `PhotosPicker`'s own binding semantics — it
+    /// always reflects the *full* current selection, not an incremental
+    /// add) — but preserves any EXR items already queued via
+    /// `addEXRFiles`, since those live outside that binding entirely and
+    /// a Photos re-selection shouldn't silently drop them.
     func setSelection(_ pickerItems: [PhotosPickerItem]) {
         guard !isRunning else { return }
-        items = pickerItems.map { Item(pickerItem: $0) }
+        let preloaded = items.filter {
+            if case .preloadedImage = $0.source { return true }
+            return false
+        }
+        items = pickerItems.map { Item(source: .photo($0)) } + preloaded
+    }
+
+    /// Additive, unlike `setSelection` — each call appends. Decodes each
+    /// file immediately (skipping any that fail to decode, same
+    /// never-partial-output reasoning as `EXRImportService`) rather than
+    /// deferring to `processItem`, so nothing needs to keep a
+    /// security-scoped bookmark alive for the whole batch run.
+    func addEXRFiles(_ urls: [URL]) {
+        guard !isRunning else { return }
+        for url in urls {
+            guard url.startAccessingSecurityScopedResource() else { continue }
+            defer { url.stopAccessingSecurityScopedResource() }
+            guard let image = try? EXRImportService.loadImage(from: url) else { continue }
+            items.append(Item(source: .preloadedImage(image, name: url.lastPathComponent)))
+        }
     }
 
     func runAll() {
@@ -44,7 +82,7 @@ final class BatchUpscaleViewModel: ObservableObject {
             // here, then reloaded by processItem(at:) — a small duplicated
             // fetch, not a network call, in exchange for not threading a
             // preloaded image through the whole queue for one case).
-            let previewImage = await Self.loadPreviewImage(items.first?.pickerItem)
+            let previewImage = await Self.loadPreviewImage(items.first?.source)
             let upscaler = await provider.resolveCurrent(for: previewImage)
             BatchLiveActivityController.start(totalCount: items.count)
             for index in items.indices {
@@ -64,15 +102,38 @@ final class BatchUpscaleViewModel: ObservableObject {
 
     private func processItem(at index: Int, using upscaler: ImageUpscaling) async {
         do {
-            guard let data = try await items[index].pickerItem.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data),
-                  let cgImage = image.cgImage else {
-                items[index].status = .failed(UpscaleError.invalidImage.errorDescription ?? "Couldn't read this photo.")
-                return
+            let normalized: UIImage
+            let fileSizeBytes: Int?
+            let assetIdentifier: String?
+
+            switch items[index].source {
+            case .photo(let pickerItem):
+                guard let data = try await pickerItem.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data),
+                      let cgImage = image.cgImage else {
+                    items[index].status = .failed(UpscaleError.invalidImage.errorDescription ?? "Couldn't read this photo.")
+                    return
+                }
+                normalized = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+                fileSizeBytes = data.count
+                assetIdentifier = pickerItem.itemIdentifier
+            case .preloadedImage(let image, _):
+                // Already normalized by EXRDecoder (scale 1, .up) — no
+                // reprocessing needed, unlike the Photos path above.
+                guard image.cgImage != nil else {
+                    items[index].status = .failed(UpscaleError.invalidImage.errorDescription ?? "Couldn't read this image.")
+                    return
+                }
+                normalized = image
+                fileSizeBytes = nil
+                // No Photos asset to overwrite — same "adds a new asset
+                // instead" fallback PhotoLibrarySaver already uses for any
+                // identifier-less save (e.g. a Share Extension photo).
+                assetIdentifier = nil
             }
-            let normalized = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+
             let outcome = await UpscaleRunner.run(
-                normalized, using: upscaler, sourceFileSizeBytes: data.count,
+                normalized, using: upscaler, sourceFileSizeBytes: fileSizeBytes,
                 denoiseAmount: provider.denoiseBeforeUpscale ? 0.5 : 0,
                 sharpenAmount: provider.sharpenAmount
             ) { _ in }
@@ -94,7 +155,7 @@ final class BatchUpscaleViewModel: ObservableObject {
             // Nothing batch-specific can avoid that; it's the same
             // Photos-framework confirmation Save (single-photo) triggers.
             try await PhotoLibrarySaver.save(
-                imageToSave, overwriting: items[index].pickerItem.itemIdentifier,
+                imageToSave, overwriting: assetIdentifier,
                 format: provider.exportFormat, quality: provider.exportQuality,
                 forceNewAsset: provider.preserveOriginal, addToAlbum: provider.addToAlbumEnabled
             )
@@ -110,10 +171,15 @@ final class BatchUpscaleViewModel: ObservableObject {
         }
     }
 
-    private static func loadPreviewImage(_ pickerItem: PhotosPickerItem?) async -> UIImage? {
-        guard let pickerItem,
-              let data = try? await pickerItem.loadTransferable(type: Data.self) else { return nil }
-        return UIImage(data: data)
+    private static func loadPreviewImage(_ source: ItemSource?) async -> UIImage? {
+        guard let source else { return nil }
+        switch source {
+        case .photo(let pickerItem):
+            guard let data = try? await pickerItem.loadTransferable(type: Data.self) else { return nil }
+            return UIImage(data: data)
+        case .preloadedImage(let image, _):
+            return image
+        }
     }
 
     private static func thumbnail(of image: UIImage, maxDimension: CGFloat = 120) -> UIImage {

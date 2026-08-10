@@ -43,9 +43,45 @@ struct UpscaleStatsProvider: TimelineProvider {
 }
 
 struct UpscaleStatsWidgetView: View {
+    @Environment(\.widgetFamily) private var family
     var entry: UpscaleStatsEntry
 
     var body: some View {
+        switch family {
+        case .accessoryCircular:
+            circularView
+        case .accessoryRectangular:
+            rectangularView
+        default:
+            homeScreenView
+        }
+    }
+
+    /// Lock Screen circular complication — just the count, no thumbnail
+    /// (too small to read one at that size anyway).
+    private var circularView: some View {
+        ZStack {
+            AccessoryWidgetBackground()
+            VStack(spacing: 0) {
+                Text("\(entry.totalUpscales)")
+                    .font(.system(size: 20, weight: .bold))
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 10))
+            }
+        }
+    }
+
+    /// Lock Screen rectangular complication.
+    private var rectangularView: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Label("PixelBoost", systemImage: "wand.and.stars")
+                .font(.system(size: 12, weight: .semibold))
+            Text("\(entry.totalUpscales) upscaled")
+                .font(.system(size: 14, weight: .bold))
+        }
+    }
+
+    private var homeScreenView: some View {
         ZStack {
             if let thumbnail = entry.lastResultThumbnail {
                 Image(uiImage: thumbnail)
@@ -83,6 +119,6 @@ struct UpscaleStatsWidget: Widget {
         }
         .configurationDisplayName("PixelBoost Stats")
         .description("Shows your total upscale count and the most recent result.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular])
     }
 }
