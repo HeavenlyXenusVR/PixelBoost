@@ -84,11 +84,19 @@ final class BatchUpscaleViewModel: ObservableObject {
             // preloaded image through the whole queue for one case).
             let previewImage = await Self.loadPreviewImage(items.first?.source)
             let upscaler = await provider.resolveCurrent(for: previewImage)
+            // "Auto use of tools" — when Auto's own silent pick (the only
+            // place it actually happens unattended; see
+            // UpscalerProvider.lastAutoSelectedModel's doc comment) lands
+            // on a render-tuned model, the whole batch gets the matching
+            // auto prep too, same as Compare Models does per-candidate for
+            // the interactive path (see UpscalerViewModel.compareModels).
+            let autoRenderDenoise = provider.modelChoice == .auto
+                && (provider.lastAutoSelectedModel == .render3D || provider.lastAutoSelectedModel == .stylizedRender)
             BatchLiveActivityController.start(totalCount: items.count)
             for index in items.indices {
                 currentIndex = index
                 items[index].status = .processing
-                await processItem(at: index, using: upscaler)
+                await processItem(at: index, using: upscaler, autoRenderDenoise: autoRenderDenoise)
                 BatchLiveActivityController.update(completedCount: index + 1, totalCount: items.count)
             }
             BatchLiveActivityController.end(completedCount: items.count, totalCount: items.count)
@@ -100,7 +108,7 @@ final class BatchUpscaleViewModel: ObservableObject {
         }
     }
 
-    private func processItem(at index: Int, using upscaler: ImageUpscaling) async {
+    private func processItem(at index: Int, using upscaler: ImageUpscaling, autoRenderDenoise: Bool) async {
         do {
             let normalized: UIImage
             let fileSizeBytes: Int?
@@ -135,7 +143,8 @@ final class BatchUpscaleViewModel: ObservableObject {
             let outcome = await UpscaleRunner.run(
                 normalized, using: upscaler, sourceFileSizeBytes: fileSizeBytes,
                 denoiseAmount: provider.denoiseBeforeUpscale ? 0.5 : 0,
-                sharpenAmount: provider.sharpenAmount
+                sharpenAmount: provider.sharpenAmount,
+                autoRenderDenoise: autoRenderDenoise
             ) { _ in }
             guard let result = outcome.result else {
                 items[index].status = .failed(outcome.error?.localizedDescription ?? "Upscale failed.")

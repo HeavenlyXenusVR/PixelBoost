@@ -141,6 +141,13 @@ up 3D-render noise — see "Render Denoise" below and
 - **Compare Models** — with Auto selected, Upscale runs the whole photo
   through every bundled model and shows every result in a tappable,
   full-screen-viewable grid; pick whichever looks best, or save them all.
+  Auto also automatically runs the matching classical/ML tool ahead of a
+  candidate that expects it — right now that means the 3D/CG Render
+  (BSRGAN) and Toon/Cel-Shaded Render (Real-CUGAN) candidates each get
+  Render Denoise applied first, since both models are tuned assuming
+  pre-cleaned input rather than a render's own raw noise. Batch's silent
+  auto-pick (the one place Auto genuinely picks a single model unattended,
+  rather than showing every result) gets the same treatment.
 - **2x/3x/4x output scale** — every model natively super-resolves at 4x
   (that's fixed by the architecture), then the result is resized down to
   your chosen final size — so 2x/3x still benefit from the model's full
@@ -201,6 +208,12 @@ up 3D-render noise — see "Render Denoise" below and
   finishes.
 - **Cloud backup** — optionally back up a result to temporary (auto-
   expiring) server storage; browse/restore/delete from the Cloud tab.
+  Uploads use the same format-aware encoding as a Photos save (JPEG for
+  an opaque result, PNG only when there's real alpha to preserve) rather
+  than always lossless PNG — a large 4x-upscaled photo used to routinely
+  exceed the server's upload cap for no reason (nothing to preserve
+  losslessly on an ordinary opaque photo); see `server/README.md`'s
+  "Uploads" section.
 - **History & stats** — every upscale attempt logged (technique, timing,
   success/failure), with an aggregate stats header (total, success rate,
   avg time, total megapixels produced) and swipe-to-delete/clear-all.

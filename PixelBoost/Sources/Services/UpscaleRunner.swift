@@ -21,16 +21,32 @@ enum UpscaleRunner {
     /// - Parameter sharpenAmount: 0...1, run via `PostSharpen` on the
     ///   result *after* upscaling succeeds — a no-op on failure, since
     ///   there's nothing to sharpen.
+    /// - Parameter autoRenderDenoise: runs the same model `RenderDenoiseView`
+    ///   uses (see `RenderDenoiseService`) on `sourceImage` *before*
+    ///   `upscaler`, same "only the copy fed to the model" scoping as
+    ///   `denoiseAmount` above — set when Auto mode picked a render-tuned
+    ///   model (BSRGAN/Real-CUGAN) for this photo, since a render's own
+    ///   noise character is exactly what that model expects to have
+    ///   already been cleaned up before upscaling, not left for the SR
+    ///   model to amplify. Best-effort: a failure here (e.g. the model
+    ///   somehow isn't bundled) silently falls back to the undenoised
+    ///   image rather than failing the whole upscale over an enhancement
+    ///   step, same reasoning as `ActionLoggingService` never blocking the
+    ///   action it's describing.
     static func run(
         _ sourceImage: UIImage,
         using upscaler: ImageUpscaling,
         sourceFileSizeBytes: Int?,
         denoiseAmount: Double = 0,
         sharpenAmount: Double = 0,
+        autoRenderDenoise: Bool = false,
         progress: @escaping (Double) -> Void
     ) async -> Outcome {
         let startedAt = Date()
-        let upscalerInput = denoiseAmount > 0 ? RestoreService.denoise(sourceImage, amount: denoiseAmount) : sourceImage
+        var upscalerInput = denoiseAmount > 0 ? RestoreService.denoise(sourceImage, amount: denoiseAmount) : sourceImage
+        if autoRenderDenoise {
+            upscalerInput = (try? await RenderDenoiseService.denoise(upscalerInput) { _ in }) ?? upscalerInput
+        }
         do {
             var result = try await upscaler.upscale(upscalerInput, progress: progress)
             if sharpenAmount > 0 {

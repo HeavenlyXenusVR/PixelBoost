@@ -164,8 +164,22 @@ final class UpscalerViewModel: ObservableObject {
 
             var results: [ModelComparisonResult] = []
             for (index, candidate) in candidates.enumerated() {
+                // "Auto use of tools" — Compare Models is Auto mode's real
+                // interactive behavior (see ContentView's isCompareMode),
+                // so the render-tuned candidates get the same auto prep
+                // Batch's silent auto-pick does for them (see
+                // BatchUpscaleViewModel.runAll): denoised with the
+                // render-specific model *before* being upscaled, not left
+                // for the SR model to amplify whatever noise a render
+                // brought with it. Scoped to just these two candidates —
+                // running every model through an extra denoise pass first
+                // would make the sharpness-driven comparison itself less
+                // apples-to-apples for the other four, which were never
+                // tuned assuming a pre-denoised input.
+                let autoRenderDenoise = candidate.choice == .render3D || candidate.choice == .stylizedRender
                 let outcome = await UpscaleRunner.run(
-                    sourceImage, using: candidate.upscaler, sourceFileSizeBytes: sourceFileSizeBytes
+                    sourceImage, using: candidate.upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
+                    autoRenderDenoise: autoRenderDenoise
                 ) { [weak self] tileProgress in
                     Task { @MainActor in
                         self?.comparisonProgress = (Double(index) + tileProgress) / Double(candidates.count)

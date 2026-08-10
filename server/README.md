@@ -62,10 +62,25 @@ storage, not a photo library — nothing here is meant to be permanent.
 
 ## Uploads
 
-Capped at 20MB per file (`MAX_UPLOAD_BYTES` in `main.py`) — comfortably
-under typical MariaDB `max_allowed_packet` defaults. Raise both together if
-larger uploads are ever needed. Image dimensions are read server-side via
+Capped at 60MB per file (`MAX_UPLOAD_BYTES` in `main.py`) — a 4x-upscaled
+photo with real transparency (a Cutout result) still uploads as lossless
+PNG and can clear 50MP, so the old 20MB cap was a real, hit-in-practice
+limit ("Backup to Cloud" failing on large results), not just a
+theoretical ceiling. Requires MariaDB's own `max_allowed_packet` to be raised alongside it —
+this repo's deployed instance was bumped to 64MB at runtime
+(`SET GLOBAL max_allowed_packet = 67108864`); **persist this in
+`/etc/my.cnf.d/server.cnf`'s `[mysqld]` section (add
+`max_allowed_packet = 67108864`) and restart `mariadb.service`**, or a
+future restart silently reverts it to the 16MB default and this cap is
+right back to being lower than `MAX_UPLOAD_BYTES` itself. Raise both
+together again if larger uploads are ever needed. Image dimensions are read server-side via
 Pillow rather than trusted from client-supplied metadata.
+
+The client side halves this problem independently: `ImportExportService`
+now reuses `PhotoLibrarySaver`'s format-aware encoding (JPEG for an opaque
+result, PNG only when there's real alpha to preserve) instead of always
+uploading lossless PNG — most upscaled photos have no transparency, so this
+alone cuts a typical upload to a fraction of its old size.
 
 ## Running
 

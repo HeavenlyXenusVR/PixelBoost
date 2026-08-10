@@ -41,7 +41,16 @@ enum ImportExportService {
     static func upload(
         _ image: UIImage, kind: Kind, historyID: String? = nil, ttlHours: Int? = nil
     ) async throws -> StoredImageUploadResult {
-        guard let pngData = image.pngData() else { throw UpscaleError.invalidImage }
+        // Was unconditionally `image.pngData()` — lossless PNG of a
+        // 4x-upscaled photo (easily 50MP+) routinely blew past the
+        // server's upload size cap for perfectly ordinary opaque photos
+        // that never needed lossless encoding in the first place. Reuses
+        // PhotoLibrarySaver's same "PNG only if there's real alpha to
+        // preserve, JPEG otherwise" heuristic — a fixed 0.85 quality here
+        // rather than the user's Photos-save quality setting, since this
+        // debug/cloud-backup path is a separate concern from the local
+        // save format Settings actually control.
+        guard let (data, isPNG) = Self.encode(image) else { throw UpscaleError.invalidImage }
 
         let boundary = "Boundary-\(UUID().uuidString)"
         var body = Data()
@@ -60,10 +69,12 @@ enum ImportExportService {
             appendField("ttl_hours", String(ttlHours))
         }
 
+        let filename = isPNG ? "image.png" : "image.jpg"
+        let contentType = isPNG ? "image/png" : "image/jpeg"
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"image.png\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: image/png\r\n\r\n".data(using: .utf8)!)
-        body.append(pngData)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
 
         var request = try APIClient.request(path: kind.rawValue, method: "POST")
@@ -91,5 +102,13 @@ enum ImportExportService {
     static func delete(id: String, kind: Kind) async throws {
         let request = try APIClient.request(path: "\(kind.rawValue)/\(id)", method: "DELETE")
         _ = try await APIClient.data(for: request)
+    }
+
+    /// - Returns: the encoded bytes and whether they're PNG (vs. JPEG) —
+    ///   the caller needs to know which to set the right filename/
+    ///   Content-Type on the multipart upload.
+    private static func encode(_ image: UIImage) -> (data: Data, isPNG: Bool)? {
+        guard let data = PhotoLibrarySaver.encodedData(for: image, format: .auto, quality: 0.85) else { return nil }
+        return (data, image.hasAlphaChannel)
     }
 }

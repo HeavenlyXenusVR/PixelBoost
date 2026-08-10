@@ -218,7 +218,12 @@ enum PhotoLibrarySaver {
     /// (Settings). `.auto` keeps the original heuristic — PNG for real
     /// alpha (a Cutout result), JPEG otherwise — since forcing a lossy
     /// format on something with transparency would silently flatten it.
-    private static func encodedData(for image: UIImage, format: ExportFormat, quality: Double) -> Data? {
+    /// Not `private` — `ImportExportService` reuses this exact heuristic
+    /// for cloud-backup uploads, which used to always upload lossless PNG
+    /// regardless of format settings and would blow past the server's
+    /// upload size cap on a large opaque result for no reason (no alpha to
+    /// actually preserve).
+    static func encodedData(for image: UIImage, format: ExportFormat, quality: Double) -> Data? {
         switch format {
         case .auto:
             return image.hasAlphaChannel ? image.pngData() : image.jpegData(compressionQuality: quality)

@@ -29,9 +29,14 @@ API_KEY: str = os.getenv("UPSCALER_BRIDGE_API_KEY", "")
 # Temporary image storage (imports/exports) config
 # ---------------------------------------------------------------------------
 
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB — stays comfortably under typical
-# MariaDB max_allowed_packet defaults; raise both together if larger uploads
-# are ever needed.
+MAX_UPLOAD_BYTES = 60 * 1024 * 1024  # 60MB — a 4x-upscaled photo with real
+# transparency (a Cutout result) still has to go through as PNG (see the
+# app-side encodedData()/hasAlphaChannel logic — only an opaque result gets
+# re-encoded as JPEG before upload), and a 4x upscale of a modern phone
+# photo easily clears 50MP; lossless PNG at that resolution can exceed the
+# old 20MB cap on its own. Raised alongside MariaDB's max_allowed_packet
+# (also bumped to 64MB on the host — see server/README.md) to comfortably
+# clear this with multipart overhead room to spare.
 DEFAULT_TTL_HOURS = 24
 MAX_TTL_HOURS = 24 * 7
 _CLEANUP_INTERVAL_SECONDS = 3600  # hourly
