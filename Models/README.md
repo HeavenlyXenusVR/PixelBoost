@@ -18,6 +18,41 @@ script, two supported architectures).
 above against a crop of the photo and keeps whichever scores sharper,
 rather than picking one of these by fixed default.
 
+A fifth model, `OIDNRenderDenoise.mlmodel`, backs the separate **Render
+Denoise** tab (not part of Upscale/Auto above — it denoises in place, it
+doesn't super-resolve):
+
+| File | Source | Architecture | Best for |
+|---|---|---|---|
+| `OIDNRenderDenoise.mlmodel` | `rt_ldr_small.tza` (Intel Open Image Denoise) | Small U-Net (4 pool/upsample stages, 32ch encoder) | Cleaning up noise from a 3D/Blender render (Cycles, Eevee, any path tracer) — a different noise character than a photo's sensor grain, which is what Restore's `CINoiseReduction` slider targets instead |
+
+Converted with [`convert_oidn.py`](convert/convert_oidn.py) from
+`rt_ldr_small.tza` (Apache-2.0, [RenderKit/oidn-weights](https://github.com/RenderKit/oidn-weights))
+— the same beauty-only (no albedo/normal AOVs), fast/"small" filter variant
+Blender's Cycles Denoise node itself uses, reimplemented in PyTorch
+(`oidn_unet.py`) since Intel only ships pretrained weights in their own
+`.tza` binary format, not as a PyTorch/ONNX checkpoint — see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the license and
+attribution and "Swapping in a different model" below for **the one
+real difference from the other four**: this conversion had to use
+coremltools' legacy `neuralnetwork` backend (producing a flat `.mlmodel`,
+not an `.mlpackage`) rather than the modern `mlprogram`/ML Program backend
+the other four use, because the machine this was converted on lacked the
+compiled `libmilstoragepython` native extension `mlprogram` needs to
+externalize weights into a `.mlpackage`'s separate weight blob — a Linux/
+Python-3.14 environment limitation, not a property of the model itself.
+Functionally equivalent (Xcode compiles either into the same `.mlmodelc`),
+just worth knowing if a future re-convert on a machine with a full
+coremltools install ever swaps it back to `.mlpackage`.
+Sanity-checked the same way as the other four: ran the un-converted PyTorch
+model (weights loaded straight from the `.tza`) against a synthetic noisy
+test image (no real render/EXR available in the conversion environment) —
+mean-squared error against the clean reference dropped ~7.6x and
+high-frequency noise energy dropped ~25x after denoising, no NaNs. Like
+every other model here, **the actual compiled `.mlmodel` has not been run
+in Xcode/on-device** — that requires macOS, unavailable where this was
+converted.
+
 **Not verified end-to-end.** All four conversions (`torch.jit.trace` →
 `coremltools.convert`) produce a `.mlpackage` with the right input/output
 shapes, and the underlying PyTorch model + weights were checked separately

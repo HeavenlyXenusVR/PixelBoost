@@ -10,7 +10,7 @@ custom presets — see "Logging & cloud features" below.
 **Requires iOS 17** — Remove Background (Cutout) uses Vision's
 `VNGenerateForegroundInstanceMaskRequest`, which iOS 16 doesn't have.
 
-Ships with four real converted models (all BSD-3-Clause, see
+Ships with four real converted super-resolution models (all BSD-3-Clause, see
 [`Models/README.md`](Models/README.md)) — Real-ESRGAN's general-photo
 `x4plus`, anime/illustration-optimized `anime_6B`, low-artifact portrait
 `RealESRNet_x4plus`, and the fast/lightweight `realesr-general-x4v3` — plus
@@ -18,16 +18,19 @@ a plain Lanczos-resampling fallback (`LanczosUpscaler`) so the app still
 works if a model is ever missing/swapped out. An Auto mode runs every
 bundled model on the *full* photo and shows every result so you can
 compare and pick the one you like, rather than a heuristic quietly
-deciding for you — see "Compare Models" below.
+deciding for you — see "Compare Models" below. A fifth model (Apache-2.0,
+converted from Intel Open Image Denoise) backs the separate **Render
+Denoise** tab for cleaning up 3D-render noise — see "Render Denoise" below
+and [`Models/README.md`](Models/README.md).
 
 ---
 
 ## Features
 
-- **Bottom tab bar** — every screen (Upscale plus all twelve editing tools,
+- **Bottom tab bar** — every screen (Upscale plus all thirteen editing tools,
   plus Batch/Cloud/History/Settings) is its own tab in a horizontally
   scrollable bar along the bottom, instead of tools being buried behind a
-  menu or a top toolbar. There are seventeen tabs, more than the ~5 a native
+  menu or a top toolbar. There are eighteen tabs, more than the ~5 a native
   iOS tab bar shows before collapsing the rest into an auto-generated
   "More" list, so this is a custom bar rather than `TabView`. Every tab
   stays mounted the whole time you have the app open, so switching away
@@ -77,6 +80,13 @@ deciding for you — see "Compare Models" below.
     just around faces Vision detects (`VNDetectFaceLandmarksRequest`) — a
     classical detail boost, not a trained restoration model (GFPGAN/
     CodeFormer-class); see "Known simplifications" below.
+  - **Render Denoise** — a genuine trained model (converted from Intel Open
+    Image Denoise's `rt_ldr_small` filter, Apache-2.0 — the same one
+    Blender's Cycles Denoise node uses), for cleaning up noise from a 3D
+    render (Cycles, Eevee, any other path tracer) rather than a real
+    photo's sensor grain, which Restore's `CINoiseReduction` slider is
+    tuned for instead. Fixed-strength, one Apply action — no slider, since
+    the model has no adjustable parameter.
   - **Clone Stamp** — tap a source point, then paint elsewhere to copy
     pixels from a fixed offset relative to that point (the offset is set
     once, from the source point and the first spot you paint, then stays
@@ -330,6 +340,20 @@ Swift Package resolution, no network access needed at build time.
   a little but can't reconstruct detail that genuinely isn't there, and it
   does nothing on a photo with no detectable face. Denoise is a single
   `CINoiseReduction` pass with no per-region strength control.
+- Render Denoise's model conversion was sanity-checked in plain PyTorch
+  against a synthetic noisy test pattern (no real render/EXR available in
+  the conversion environment) rather than an actual Blender/Cycles output —
+  numerically a large, coherent noise reduction (not garbage/NaNs), but not
+  the same bar as "checked against a real render." It also had to use
+  coremltools' legacy `neuralnetwork` backend instead of the `mlprogram`
+  backend the other four models use (a missing native dependency in the
+  conversion environment, not a property of the model — see
+  `Models/convert/README.md`), producing a `.mlmodel` rather than a
+  `.mlpackage`; functionally equivalent once Xcode compiles it, but
+  untested end-to-end like everything else in this list. Fixed-strength
+  only — the underlying model has no adjustable parameter, so unlike
+  Restore there's no slider to back off if it's too aggressive on a given
+  image.
 - Background Replace (part of Cutout) is seven curated fills — solid
   colors, two gradients, a blurred copy of the original photo — not a
   generative model that invents a plausible new scene behind the subject.
@@ -343,7 +367,7 @@ Swift Package resolution, no network access needed at build time.
   fixed source-point marker) — both are safe simplifications since the
   offset is genuinely constant for the whole gesture, same as a real
   clone-stamp tool, just without the extra live-preview chrome.
-- All seventeen tabs stay mounted simultaneously for the app's whole lifetime
+- All eighteen tabs stay mounted simultaneously for the app's whole lifetime
   (so switching tabs never loses in-progress work) rather than being
   created/destroyed on demand — a small, deliberate memory-vs-simplicity
   tradeoff that hasn't been profiled on a real device, since none is

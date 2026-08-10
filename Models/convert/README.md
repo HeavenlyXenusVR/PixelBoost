@@ -63,3 +63,62 @@ incoming 0-255 image down to the `[0,1]` range the model expects, and the
 wrapper clamps + multiplies the model's output back up to `[0,255]` before
 it's declared as an output `ImageType` — so the compiled model takes and
 returns plain images with no manual normalization needed on the Swift side.
+
+## Converting the Render Denoise model (OIDN)
+
+Separate from the four Real-ESRGAN models above — reproduces
+`../OIDNRenderDenoise.mlmodel`. Same Python/torch/coremltools setup as
+above, plus `numpy` (already a torch dependency):
+
+```bash
+mkdir -p oidn_weights
+curl -sL -o oidn_weights/rt_ldr_small.tza \
+    "https://media.githubusercontent.com/media/RenderKit/oidn-weights/master/rt_ldr_small.tza"
+# NOT https://raw.githubusercontent.com/... for this one — that repo stores
+# .tza files via Git LFS, so the plain raw URL serves a small LFS pointer
+# text file, not the actual ~620KB binary weights.
+
+python3 convert_oidn.py --weights oidn_weights/rt_ldr_small.tza --out OIDNRenderDenoise.mlmodel
+```
+
+`tza.py` is Intel's own TZA (Tensor Archive) reader, vendored unmodified
+from `oidn`'s `training/tza.py` (Apache-2.0) — the pretrained `.tza` weights
+Intel ships are *not* a PyTorch/ONNX checkpoint, just this custom binary
+tensor format, so this is a real dependency, not a convenience copy.
+`oidn_unet.py` is a from-scratch PyTorch reimplementation of the "small" RT
+U-Net architecture (`oidn`'s `training/model.py`, same license) — parameter
+names match the original 1:1 (`enc_conv0`, `dec_conv1b`, ...) specifically
+so `rt_ldr_small.tza`'s 32 tensors (all stored `oihw`, PyTorch `Conv2d`'s
+own native weight layout) load directly via `load_state_dict`, no
+renaming/transposition needed.
+
+**Produces a `.mlmodel`, not a `.mlpackage`, unlike the other four models**
+— `ct.convert(..., convert_to="neuralnetwork")` explicitly, not the default
+`mlprogram` backend `convert.py` uses. This was a practical workaround, not
+a deliberate choice: the machine this was converted on (Linux, Python 3.14)
+had no working `coremltools.libmilstoragepython` — a compiled native
+extension the `mlprogram`/`.mlpackage` backend needs to externalize weights
+into a separate blob file, and PyPI has never published a Linux wheel for
+any coremltools version that includes it (only an ancient `0.8`/py3.6
+build). The legacy `neuralnetwork` backend embeds weights directly in the
+protobuf spec instead, sidestepping that dependency entirely, and produces
+a fully equivalent model — Xcode compiles either format into the same
+`.mlmodelc` at build time, and nothing on the Swift side (`project.yml`'s
+`sources:`, `CoreMLTileUpscaler`) cares which one a given model started as.
+If converting on a machine with a real `coremltools[libmilstoragepython]`
+install (e.g. actual macOS, or a from-source Linux build), passing
+`convert_to="mlprogram"` — `convert.py`'s default, just omit the argument
+entirely — would produce a `.mlpackage` instead, for consistency with the
+other four; nothing else about `convert_oidn.py` would need to change.
+
+Same `Wrapped` 0-255-in/0-255-out convention as `convert.py`'s Real-ESRGAN
+wrapper (see above) — OIDN's LDR filter already expects plain
+display-referred `[0,1]` color (a rendered PNG/JPEG straight off a render
+engine, no linear/EXR tonemapping step needed), which lines up with what
+`ImageType(scale=1/255)` produces from a 0-255 image.
+
+`Config(tileSize: 128, scaleFactor: 1, overlap: 8)` on the Swift side (see
+`RenderDenoiseService`) — `scaleFactor: 1` because this model denoises in
+place, it doesn't upscale, unlike every other bundled model. 128 already
+satisfies the model's own 16px alignment requirement (4 pooling stages,
+each halving), so no extra input padding was needed in the wrapper.
