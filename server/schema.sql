@@ -1,4 +1,4 @@
--- upscaler-bridge schema
+-- upscaler-bridge schema (PostgreSQL)
 --
 -- One append-only row per upscale attempt (success or failure) — this is a
 -- debugging/analytics log, not a sync mechanism, so nothing here is ever
@@ -38,12 +38,11 @@ CREATE TABLE IF NOT EXISTS upscale_history (
     -- from "this one device/OS version is the problem".
     app_version VARCHAR(20),
     os_version VARCHAR(20),
-    device_model VARCHAR(50),
-
-    INDEX idx_device_history (device_id, created_at),
-    INDEX idx_technique (technique, created_at),
-    INDEX idx_failures (success, created_at)
+    device_model VARCHAR(50)
 );
+CREATE INDEX IF NOT EXISTS idx_device_history ON upscale_history (device_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_technique ON upscale_history (technique, created_at);
+CREATE INDEX IF NOT EXISTS idx_failures ON upscale_history (success, created_at);
 
 -- General-purpose action log — anything that isn't a full upscale attempt
 -- (Save, Compare Models, Cutout, a Settings change, ...) but is still worth
@@ -58,9 +57,9 @@ CREATE TABLE IF NOT EXISTS action_log (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     app_version VARCHAR(20),
     os_version VARCHAR(20),
-    device_model VARCHAR(50),
-    INDEX idx_device_action (device_id, action, created_at)
+    device_model VARCHAR(50)
 );
+CREATE INDEX IF NOT EXISTS idx_device_action ON action_log (device_id, action, created_at);
 
 -- ---------------------------------------------------------------------------
 -- Temporary image storage (imports/exports) — expiring, not permanent
@@ -83,10 +82,10 @@ CREATE TABLE IF NOT EXISTS image_imports (
     width INT,
     height INT,
     file_size_bytes INT NOT NULL,
-    image_data LONGBLOB NOT NULL,
-    INDEX idx_device_imports (device_id, created_at),
-    INDEX idx_import_expiry (expires_at)
+    image_data BYTEA NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_device_imports ON image_imports (device_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_import_expiry ON image_imports (expires_at);
 
 -- A device's upscaled results, uploaded on request — lets a result be
 -- re-fetched (e.g. after local storage was cleared, or from a second
@@ -95,7 +94,7 @@ CREATE TABLE IF NOT EXISTS image_imports (
 CREATE TABLE IF NOT EXISTS image_exports (
     id VARCHAR(36) PRIMARY KEY,
     device_id VARCHAR(64) NOT NULL,
-    history_id VARCHAR(36),
+    history_id VARCHAR(36) REFERENCES upscale_history(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP NOT NULL,
     filename VARCHAR(255),
@@ -103,11 +102,10 @@ CREATE TABLE IF NOT EXISTS image_exports (
     width INT,
     height INT,
     file_size_bytes INT NOT NULL,
-    image_data LONGBLOB NOT NULL,
-    INDEX idx_device_exports (device_id, created_at),
-    INDEX idx_export_expiry (expires_at),
-    FOREIGN KEY (history_id) REFERENCES upscale_history(id) ON DELETE SET NULL
+    image_data BYTEA NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_device_exports ON image_exports (device_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_export_expiry ON image_exports (expires_at);
 
 -- ---------------------------------------------------------------------------
 -- Customization
@@ -123,20 +121,25 @@ CREATE TABLE IF NOT EXISTS custom_presets (
     model_name VARCHAR(100) NOT NULL,
     overlap INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY device_preset_name (device_id, name),
-    INDEX idx_device_presets (device_id)
+    UNIQUE (device_id, name)
 );
+CREATE INDEX IF NOT EXISTS idx_device_presets ON custom_presets (device_id);
 
 -- Per-device settings backup. This app has no accounts, so "sync" here
 -- really means "manually-triggered backup/restore to/from one server
 -- record keyed by device_id" (see Settings' Backup/Restore actions),
--- not automatic multi-device sync.
+-- not automatic multi-device sync. `updated_at` is set explicitly by the
+-- app's own upsert query (see main.py's upsert_device_settings) — MySQL's
+-- `ON UPDATE CURRENT_TIMESTAMP` column attribute this table used to declare
+-- has no Postgres equivalent short of a trigger, and an explicit
+-- `updated_at = CURRENT_TIMESTAMP` in the one query that ever touches this
+-- row is simpler than adding one.
 CREATE TABLE IF NOT EXISTS device_settings (
     device_id VARCHAR(64) PRIMARY KEY,
     haptics_enabled BOOLEAN DEFAULT TRUE,
     model_choice VARCHAR(50) DEFAULT 'generalPhoto',
     quality VARCHAR(50) DEFAULT 'standard',
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Metadata about bundled models — richer, server-editable descriptions
@@ -157,4 +160,4 @@ CREATE TABLE IF NOT EXISTS model_registry (
 INSERT INTO model_registry (model_name, display_name, description, license, tile_size, scale_factor, is_active) VALUES
     ('RealESRGAN', 'General Photo', 'Real-ESRGAN x4plus — general-purpose photo upscaling, 23 RRDB blocks.', 'BSD-3-Clause', 128, 4, TRUE),
     ('RealESRGANAnime', 'Anime / Illustration', 'Real-ESRGAN x4plus anime_6B — optimized for anime/illustration art, 6 RRDB blocks (faster).', 'BSD-3-Clause', 128, 4, TRUE)
-ON DUPLICATE KEY UPDATE display_name = VALUES(display_name);
+ON CONFLICT (model_name) DO UPDATE SET display_name = EXCLUDED.display_name;

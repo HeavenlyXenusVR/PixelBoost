@@ -7,10 +7,28 @@ device settings backup, and a model registry — mirroring Lumisound's
 `https://upscaler-bridge.xenusanimations.studio` (see `docker-compose.yml`
 in the `music` compose project, `upscaler-bridge` service).
 
-Every endpoint here is verified end-to-end against a throwaway MariaDB
-container before being deployed — round-tripped requests, correct
-byte-exact image storage, TTL expiry actually firing, upsert correctness —
-not just "the code compiles."
+**PostgreSQL**, not MariaDB/MySQL — migrated (see git history for the
+MariaDB-era version of this file/schema if needed) onto the same shared
+Postgres instance the music bots and Lumisound's `ios-bridge` already run
+against, in its own `image_upscaler` database. `db.py` uses `aiopg`
+(wraps `psycopg2`, same `%s`-placeholder/`cursor.execute()` API `aiomysql`
+had) rather than `asyncpg`, specifically so this port didn't need to
+rewrite every parameterized query in `main.py` for `asyncpg`'s incompatible
+`$1`/`$2` placeholders — same approach `ios-bridge` took for its own
+MySQL->Postgres migration. `schema.sql` is plain Postgres DDL (`BYTEA` not
+`LONGBLOB`, standalone `CREATE INDEX` statements not inline `INDEX(...)`,
+`ON CONFLICT ... DO UPDATE` not `ON DUPLICATE KEY UPDATE`) — see that
+file's comments for anything non-obvious in the conversion.
+
+The MariaDB->Postgres migration was verified end-to-end against the actual
+live deployed instance (not just a throwaway test container) before being
+declared done: real INSERT/SELECT round-trips through `log/upscale` +
+`log/history`, `log/stats`'s `COUNT(*) FILTER (WHERE success)`/`SUM`/`AVG`
+aggregates, both `ON CONFLICT DO UPDATE` upserts (`custom_presets`,
+`device_settings` — including `updated_at` actually advancing on a second
+upsert), and a byte-exact `BYTEA` image upload/download/delete round-trip
+with `make_interval()`-computed `expires_at`. Every converted SQL
+statement was actually exercised, not just reviewed for syntax.
 
 ## Endpoints
 
@@ -66,15 +84,12 @@ Capped at 60MB per file (`MAX_UPLOAD_BYTES` in `main.py`) — a 4x-upscaled
 photo with real transparency (a Cutout result) still uploads as lossless
 PNG and can clear 50MP, so the old 20MB cap was a real, hit-in-practice
 limit ("Backup to Cloud" failing on large results), not just a
-theoretical ceiling. Requires MariaDB's own `max_allowed_packet` to be raised alongside it —
-this repo's deployed instance was bumped to 64MB at runtime
-(`SET GLOBAL max_allowed_packet = 67108864`); **persist this in
-`/etc/my.cnf.d/server.cnf`'s `[mysqld]` section (add
-`max_allowed_packet = 67108864`) and restart `mariadb.service`**, or a
-future restart silently reverts it to the 16MB default and this cap is
-right back to being lower than `MAX_UPLOAD_BYTES` itself. Raise both
-together again if larger uploads are ever needed. Image dimensions are read server-side via
-Pillow rather than trusted from client-supplied metadata.
+theoretical ceiling. Postgres has no MariaDB-`max_allowed_packet`-style
+message-size ceiling to raise alongside this one — that whole second
+moving part the MariaDB era needed (and the host-level `sudo`-gated config
+edit it required) is gone now that this runs on Postgres. Image dimensions
+are read server-side via Pillow rather than trusted from client-supplied
+metadata.
 
 The client side halves this problem independently: `ImportExportService`
 now reuses `PhotoLibrarySaver`'s format-aware encoding (JPEG for an opaque
@@ -90,7 +105,7 @@ which has none on purpose — set it explicitly):
 | Variable | Default |
 |---|---|
 | `DB_HOST` | `127.0.0.1` |
-| `DB_PORT` | `3306` |
+| `DB_PORT` | `5432` |
 | `DB_USER` | `upscaler` |
 | `DB_PASSWORD` | *(none — required)* |
 | `DB_NAME` | `image_upscaler` |

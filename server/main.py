@@ -7,7 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
-import aiomysql
+import psycopg2.extras
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from PIL import Image
@@ -175,10 +175,10 @@ async def get_history(
     pool = await get_pool()
     where = "WHERE device_id = %s" if device_id else ""
     params: tuple = (device_id, limit, offset) if device_id else (limit, offset)
-    # DictCursor so the response rows can be returned as-is, rather than
-    # aiomysql's default plain tuples.
+    # RealDictCursor so the response rows come back as plain dicts, rather
+    # than psycopg2's default plain tuples.
     async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 f"""
                 SELECT id, device_id, created_at, source_width, source_height,
@@ -194,10 +194,11 @@ async def get_history(
                 params,
             )
             rows = await cur.fetchall()
-    # MariaDB's BOOLEAN is a TINYINT under the hood, so aiomysql hands back a
-    # plain 0/1 int here — coerce to a real bool so the JSON response is
-    # `true`/`false` rather than `1`/`0` (Swift's Codable Bool decoder
-    # rejects the latter outright).
+    # Postgres's BOOLEAN comes back as a real Python bool via psycopg2
+    # already (unlike MariaDB's TINYINT-backed BOOLEAN, which aiomysql used
+    # to hand back as a plain 0/1 int) — this coercion is now a no-op, kept
+    # only as cheap insurance against `success` ever changing type upstream,
+    # since Swift's Codable Bool decoder rejects `1`/`0` outright.
     for row in rows:
         row["success"] = bool(row["success"])
     return {"entries": rows}
@@ -278,7 +279,7 @@ async def get_action_history(
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     params += [limit, offset]
     async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 f"""
                 SELECT id, device_id, action, detail, created_at, app_version, os_version, device_model
@@ -302,12 +303,12 @@ async def get_stats(request: Request, device_id: str = Query(...)):
     await check_auth(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 """
                 SELECT
                     COUNT(*) AS total,
-                    SUM(success) AS successes,
+                    COUNT(*) FILTER (WHERE success) AS successes,
                     AVG(processing_ms) AS avg_processing_ms,
                     SUM(CASE WHEN success THEN output_width * output_height ELSE 0 END) AS total_output_pixels
                 FROM upscale_history WHERE device_id = %s
@@ -315,10 +316,14 @@ async def get_stats(request: Request, device_id: str = Query(...)):
                 (device_id,),
             )
             row = await cur.fetchone()
-    # SUM()/AVG() over MariaDB come back as Decimal via aiomysql's type
-    # conversion, not plain int/float — normalize explicitly so the JSON
-    # response (and the Swift client decoding it) gets predictable
-    # int/float types rather than a Decimal-derived string.
+    # Unlike MariaDB (where BOOLEAN is really TINYINT under the hood, so
+    # `SUM(success)` just worked), Postgres's real BOOLEAN type has no
+    # `SUM()` — `COUNT(*) FILTER (WHERE success)` above is the idiomatic
+    # Postgres replacement. SUM()/AVG() still come back as Decimal via
+    # psycopg2's type conversion either way, not plain int/float —
+    # normalize explicitly so the JSON response (and the Swift client
+    # decoding it) gets predictable int/float types rather than a
+    # Decimal-derived string.
     total = int(row["total"] or 0)
     successes = int(row["successes"] or 0)
     return {
@@ -360,7 +365,11 @@ async def _create_stored_image(
     entry_id = uuid.uuid4().hex
     columns = ["id", "device_id", "expires_at", "filename", "content_type", "width", "height", "file_size_bytes", "image_data"]
     columns += list(extra_columns.keys())
-    placeholders = ["%s", "%s", "DATE_ADD(NOW(), INTERVAL %s HOUR)"] + ["%s"] * (len(columns) - 3)
+    # NOW() + make_interval(hours => %s) — Postgres's equivalent of MySQL's
+    # DATE_ADD(NOW(), INTERVAL %s HOUR). make_interval takes a plain integer
+    # arg (not a string to concatenate/cast), so this stays just as
+    # injection-safe as every other %s placeholder here.
+    placeholders = ["%s", "%s", "NOW() + make_interval(hours => %s)"] + ["%s"] * (len(columns) - 3)
     values = [
         entry_id, device_id, hours, file.filename, file.content_type or default_content_type,
         width, height, len(data), data,
@@ -381,7 +390,7 @@ async def _create_stored_image(
 async def _get_stored_image(table: str, item_id: str) -> Response:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 f"SELECT image_data, content_type FROM {table} WHERE id = %s AND expires_at > NOW()",
                 (item_id,),
@@ -395,7 +404,7 @@ async def _get_stored_image(table: str, item_id: str) -> Response:
 async def _list_stored_images(table: str, device_id: str) -> dict:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 f"""
                 SELECT id, device_id, created_at, expires_at, filename, content_type, width, height, file_size_bytes
@@ -504,11 +513,11 @@ async def create_preset(preset: PresetCreate, request: Request):
                 """
                 INSERT INTO custom_presets (id, device_id, name, model_name, overlap)
                 VALUES (%s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE model_name = VALUES(model_name), overlap = VALUES(overlap)
+                ON CONFLICT (device_id, name) DO UPDATE SET model_name = EXCLUDED.model_name, overlap = EXCLUDED.overlap
                 """,
                 (preset_id, preset.device_id, preset.name, preset.model_name, preset.overlap),
             )
-            # Re-select rather than trust preset_id: ON DUPLICATE KEY UPDATE
+            # Re-select rather than trust preset_id: ON CONFLICT DO UPDATE
             # leaves an existing row's original id untouched, so a
             # same-name update would otherwise return an id that doesn't
             # match what's actually stored.
@@ -525,7 +534,7 @@ async def list_presets(request: Request, device_id: str = Query(...)):
     await check_auth(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 """
                 SELECT id, device_id, name, model_name, overlap, created_at
@@ -574,10 +583,11 @@ async def upsert_device_settings(settings: DeviceSettingsUpsert, request: Reques
                 """
                 INSERT INTO device_settings (device_id, haptics_enabled, model_choice, quality)
                 VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    haptics_enabled = VALUES(haptics_enabled),
-                    model_choice = VALUES(model_choice),
-                    quality = VALUES(quality)
+                ON CONFLICT (device_id) DO UPDATE SET
+                    haptics_enabled = EXCLUDED.haptics_enabled,
+                    model_choice = EXCLUDED.model_choice,
+                    quality = EXCLUDED.quality,
+                    updated_at = CURRENT_TIMESTAMP
                 """,
                 (settings.device_id, settings.haptics_enabled, settings.model_choice, settings.quality),
             )
@@ -589,7 +599,7 @@ async def get_device_settings(request: Request, device_id: str = Query(...)):
     await check_auth(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 """
                 SELECT device_id, haptics_enabled, model_choice, quality, updated_at
@@ -614,7 +624,7 @@ async def list_models(request: Request):
     await check_auth(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 """
                 SELECT model_name, display_name, description, license, tile_size, scale_factor, is_active
