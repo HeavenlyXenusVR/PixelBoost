@@ -28,6 +28,8 @@
 	<string>PixelBoost saves the edited image to your photo library.</string>
 	<key>UpscalerBridgeAPIKey</key>
 	<string>$(UPSCALER_BRIDGE_API_KEY)</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>

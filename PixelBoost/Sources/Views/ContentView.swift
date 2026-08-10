@@ -1,6 +1,7 @@
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var viewModel: UpscalerViewModel
@@ -9,6 +10,8 @@ struct ContentView: View {
     @State private var zoomedImage: UIImage?
     @State private var isBackingUp = false
     @State private var backupAlertMessage: String?
+    @State private var isPresentingEXRImporter = false
+    @State private var exrImportErrorMessage: String?
     @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
 
     var body: some View {
@@ -34,6 +37,19 @@ struct ContentView: View {
                     }
                     .buttonStyle(.pbGhost)
                     .simultaneousGesture(TapGesture().onEnded { Haptics.lightImpact() })
+
+                    // EXR isn't a Photos asset — a render's beauty pass
+                    // lives in Files (AirDropped, iCloud Drive, etc.), so
+                    // this is a separate document-picker entry point rather
+                    // than something PhotosPicker's `.images` filter could
+                    // ever surface.
+                    Button {
+                        Haptics.lightImpact()
+                        isPresentingEXRImporter = true
+                    } label: {
+                        Label("Import EXR", systemImage: "cube")
+                    }
+                    .buttonStyle(.pbGhost)
 
                     if viewModel.sourceImage != nil {
                         Button {
@@ -152,6 +168,25 @@ struct ContentView: View {
                 guard let pickerItem else { return }
                 await viewModel.load(from: pickerItem)
             }
+            .fileImporter(
+                isPresented: $isPresentingEXRImporter,
+                allowedContentTypes: [UTType(filenameExtension: "exr") ?? .data]
+            ) { result in
+                switch result {
+                case .success(let url):
+                    loadEXR(from: url)
+                case .failure(let error):
+                    exrImportErrorMessage = error.localizedDescription
+                }
+            }
+            .alert("Import EXR", isPresented: Binding(
+                get: { exrImportErrorMessage != nil },
+                set: { isPresented in if !isPresented { exrImportErrorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(exrImportErrorMessage ?? "")
+            }
             .alert("Saved", isPresented: $viewModel.savedConfirmation) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -226,6 +261,34 @@ struct ContentView: View {
     /// two at once would just race each other.
     private var isAnyToolRunning: Bool {
         viewModel.isUpscaling || viewModel.isComparing || viewModel.isRemovingBackground
+    }
+
+    /// `.fileImporter` hands back a security-scoped URL — access must be
+    /// explicitly started/stopped around actually reading the file, unlike
+    /// a `PhotosPickerItem`'s already-sandboxed `Data`. Decode+tonemap runs
+    /// off the main thread — a multi-megapixel EXR is real, uncached disk
+    /// I/O plus a per-pixel float loop, unlike the instant `CIFilter`-based
+    /// tools elsewhere in this file.
+    private func loadEXR(from url: URL) {
+        guard url.startAccessingSecurityScopedResource() else {
+            exrImportErrorMessage = "Couldn't access that file."
+            return
+        }
+        Task {
+            defer { url.stopAccessingSecurityScopedResource() }
+            do {
+                let image = try await Task.detached(priority: .userInitiated) {
+                    try EXRImportService.loadImage(from: url)
+                }.value
+                viewModel.loadSharedImage(image)
+                Haptics.success()
+                ActionLoggingService.log("exr_import", detail: ["outcome": "success"])
+            } catch {
+                exrImportErrorMessage = error.localizedDescription
+                Haptics.error()
+                ActionLoggingService.log("exr_import", detail: ["outcome": "failed", "error": error.localizedDescription])
+            }
+        }
     }
 
     private func backupResultToCloud(_ image: UIImage) async {

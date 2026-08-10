@@ -40,6 +40,10 @@ enum UpscaleRunner {
                 upscaler: upscaler, sourceImage: sourceImage, sourceFileSizeBytes: sourceFileSizeBytes,
                 outputImage: result.image, tileCount: result.tileCount, startedAt: startedAt, error: nil
             )
+            // Feeds the Home Screen widget (see UpscaleSnapshot) — every
+            // successful run through this shared function, single-image or
+            // batch alike, since both funnel through here.
+            UpscaleSnapshot.record(resultThumbnail: result.image)
             return Outcome(result: result, error: nil)
         } catch {
             log(

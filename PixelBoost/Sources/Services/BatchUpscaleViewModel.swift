@@ -46,11 +46,14 @@ final class BatchUpscaleViewModel: ObservableObject {
             // preloaded image through the whole queue for one case).
             let previewImage = await Self.loadPreviewImage(items.first?.pickerItem)
             let upscaler = await provider.resolveCurrent(for: previewImage)
+            BatchLiveActivityController.start(totalCount: items.count)
             for index in items.indices {
                 currentIndex = index
                 items[index].status = .processing
                 await processItem(at: index, using: upscaler)
+                BatchLiveActivityController.update(completedCount: index + 1, totalCount: items.count)
             }
+            BatchLiveActivityController.end(completedCount: items.count, totalCount: items.count)
             currentIndex = nil
             isRunning = false
             if items.contains(where: { if case .done = $0.status { return true } else { return false } }) {

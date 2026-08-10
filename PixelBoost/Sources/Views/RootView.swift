@@ -78,6 +78,8 @@ struct RootView: View {
         case .erase: InpaintView()
         case .restore: RestoreView()
         case .renderDenoise: RenderDenoiseView()
+        case .normalMap: NormalMapToolView()
+        case .seamlessTexture: SeamlessTextureView()
         case .clone: CloneStampView()
         case .batch: NavigationStack { BatchUpscaleView(provider: provider) }
         case .cloud: NavigationStack { CloudView() }
@@ -172,7 +174,7 @@ private struct ToolsDrawerView: View {
     let selectedTab: AppTab
     let onSelect: (AppTab) -> Void
 
-    private static let editTools: [AppTab] = [.cutout, .enhance, .selective, .crop, .pixelArt, .scripted, .overlays, .erase, .restore, .renderDenoise, .clone]
+    private static let editTools: [AppTab] = [.cutout, .enhance, .selective, .crop, .pixelArt, .scripted, .overlays, .erase, .restore, .renderDenoise, .normalMap, .seamlessTexture, .clone]
     private static let libraryTools: [AppTab] = [.cloud, .history]
 
     private let columns = [GridItem(.adaptive(minimum: 84), spacing: 14)]

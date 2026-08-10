@@ -32,6 +32,13 @@ targets:
     dependencies:
       - target: PixelBoostShare
         embed: true
+      - target: PixelBoostWidgets
+        embed: true
+      # EXRDecoder.mm builds with TINYEXR_USE_MINIZ 0 and includes the
+      # system <zlib.h> for ZIP-compressed EXR channels (Blender's default
+      # EXR compression) rather than also vendoring miniz — see
+      # Vendor/TinyEXR/README.md.
+      - sdk: libz.tbd
     sources:
       - path: PixelBoost/Sources
       # Drop a RealESRGAN*.mlmodel/.mlpackage (or your own converted model)
@@ -59,6 +66,13 @@ targets:
         excludes:
           - "*.md"
           - "LICENSE"
+      # Vendored TinyEXR (BSD-3-Clause, see Vendor/TinyEXR/README.md) —
+      # single-header C++ EXR decoder backing EXR import (EXRDecoder.mm).
+      # Same excludes reasoning as Vendor/Lua above.
+      - path: Vendor/TinyEXR
+        excludes:
+          - "*.md"
+          - "LICENSE"
     resources:
       - path: PixelBoost/Resources/Assets.xcassets
     settings:
@@ -69,7 +83,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         SWIFT_OBJC_BRIDGING_HEADER: PixelBoost/Sources/PixelBoost-Bridging-Header.h
-        HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/Lua/include"
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/Lua/include $(SRCROOT)/Vendor/TinyEXR/include"
         # Lua's own sources use old-style K&R-ish C with some patterns
         # (implicit conversions, sign comparisons) that trip Swift/Xcode's
         # stricter default warning set — never errors, just noisy, so
@@ -125,6 +139,33 @@ targets:
         SKIP_INSTALL: YES
     entitlements:
       path: PixelBoostShare/PixelBoostShare.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.pixelboost.shared
+
+  # WidgetKit extension: a Home Screen widget (UpscaleStatsWidget, reading
+  # UpscaleSnapshot's App-Group-container stats/thumbnail — same
+  # no-in-process-link pattern as PixelBoostShare above) plus the
+  # BatchUpscaleActivityAttributes Live Activity's rendering (the Activity
+  # itself is started/updated/ended by the main app's
+  # BatchLiveActivityController; this target only draws it). One extension
+  # target for both, Apple's standard pattern — a widget extension can host
+  # any number of WidgetKit widgets and Live Activity renderers together.
+  PixelBoostWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PixelBoostWidgets/Sources
+      - path: PixelBoost/Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pixelboost.ios.widgets
+        INFOPLIST_FILE: PixelBoostWidgets/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        SKIP_INSTALL: YES
+    entitlements:
+      path: PixelBoostWidgets/PixelBoostWidgets.entitlements
       properties:
         com.apple.security.application-groups:
           - group.com.pixelboost.shared
