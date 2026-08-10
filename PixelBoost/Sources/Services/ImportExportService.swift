@@ -50,7 +50,7 @@ enum ImportExportService {
         // rather than the user's Photos-save quality setting, since this
         // debug/cloud-backup path is a separate concern from the local
         // save format Settings actually control.
-        guard let (data, isPNG) = Self.encode(image) else { throw UpscaleError.invalidImage }
+        guard let (encodedImageData, isPNG) = Self.encode(image) else { throw UpscaleError.invalidImage }
 
         let boundary = "Boundary-\(UUID().uuidString)"
         var body = Data()
@@ -74,7 +74,7 @@ enum ImportExportService {
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
-        body.append(data)
+        body.append(encodedImageData)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
 
         var request = try APIClient.request(path: kind.rawValue, method: "POST")
