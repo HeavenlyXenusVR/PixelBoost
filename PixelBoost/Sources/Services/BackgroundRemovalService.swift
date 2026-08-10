@@ -53,7 +53,10 @@ enum BackgroundRemovalService {
         let maskBuffer = try result.generateMaskedImage(
             ofInstances: result.allInstances, from: handler, croppedToInstancesExtent: false
         )
-        let maskImage = CIImage(cvPixelBuffer: maskBuffer)
+        return try composite(maskImage: CIImage(cvPixelBuffer: maskBuffer), over: cgImage)
+    }
+
+    private static func composite(maskImage: CIImage, over cgImage: CGImage) throws -> UIImage {
         let subjectImage = CIImage(cgImage: cgImage)
 
         guard let blend = CIFilter(name: "CIBlendWithMask") else {
@@ -79,5 +82,85 @@ enum BackgroundRemovalService {
             throw BackgroundRemovalError.processingFailed
         }
         return UIImage(cgImage: rendered, scale: 1, orientation: .up)
+    }
+
+    // -------------------------------------------------------------------
+    // Tap to Select — a specific detected instance, not "every subject"
+    // -------------------------------------------------------------------
+    //
+    // `VNGenerateForegroundInstanceMaskRequest` already segments each
+    // distinct foreground object separately (background=0, each subject
+    // labeled 1, 2, 3, ... — `removeBackground(from:)` above just merges
+    // every one of them via `allInstances`). This reuses the exact same
+    // request/result type to expose per-instance masks instead, so a tap
+    // can pick out one specific object (a person in a group photo, one
+    // item on a table) rather than everything foreground at once.
+
+    struct DetectedInstance: Identifiable {
+        let id: Int
+        /// Single-channel (`OneComponent8`), same pixel dimensions as the
+        /// source image — 255 where this one instance is, 0 elsewhere.
+        let maskBuffer: CVPixelBuffer
+    }
+
+    struct InstanceDetectionResult {
+        let cgImage: CGImage
+        let instances: [DetectedInstance]
+    }
+
+    /// Runs the same Vision request `removeBackground(from:)` does, but
+    /// keeps every detected instance's own individual mask instead of
+    /// merging them — one `generateMaskedImage` call per instance
+    /// (cheap: post-processing over already-computed internal instance
+    /// data, not a second run of the segmentation network itself).
+    static func detectInstances(in image: UIImage) async throws -> InstanceDetectionResult {
+        guard let cgImage = image.cgImage else { throw UpscaleError.invalidImage }
+        return try await Task.detached(priority: .userInitiated) {
+            let request = VNGenerateForegroundInstanceMaskRequest()
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            try handler.perform([request])
+            guard let result = request.results?.first, !result.allInstances.isEmpty else {
+                throw BackgroundRemovalError.noSubjectDetected
+            }
+            let instances = try result.allInstances.map { index -> DetectedInstance in
+                let buffer = try result.generateMaskedImage(
+                    ofInstances: [index], from: handler, croppedToInstancesExtent: false
+                )
+                return DetectedInstance(id: index, maskBuffer: buffer)
+            }
+            return InstanceDetectionResult(cgImage: cgImage, instances: instances)
+        }.value
+    }
+
+    /// Which detected instance (if any) covers `imagePoint` — in the
+    /// source image's own pixel coordinates, top-left origin, y-down (same
+    /// convention as `ImageTiler`/`UIImage.cropped(to:)`, NOT Core Image's
+    /// bottom-left/y-up space). Checks instances in detection order and
+    /// returns the first match, which in practice means the
+    /// larger/more-confident instance wins on any pixel two overlapping
+    /// subjects' masks both cover.
+    static func instance(at imagePoint: CGPoint, in result: InstanceDetectionResult) -> DetectedInstance? {
+        result.instances.first { maskValue(at: imagePoint, in: $0.maskBuffer) > 128 }
+    }
+
+    /// Cuts just `instance` out — same alpha-matte compositing
+    /// `removeBackground(from:)` uses, just handed one instance's mask
+    /// directly instead of computing a combined one.
+    static func cutout(_ instance: DetectedInstance, from cgImage: CGImage) throws -> UIImage {
+        try composite(maskImage: CIImage(cvPixelBuffer: instance.maskBuffer), over: cgImage)
+    }
+
+    private static func maskValue(at point: CGPoint, in buffer: CVPixelBuffer) -> UInt8 {
+        let x = Int(point.x)
+        let y = Int(point.y)
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        guard x >= 0, x < width, y >= 0, y < height else { return 0 }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return 0 }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+        return row[x]
     }
 }

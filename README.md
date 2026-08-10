@@ -44,11 +44,17 @@ up 3D-render noise — see "Render Denoise" below and
   stays mounted the whole time you have the app open, so switching away
   and back never loses whatever you were in the middle of (a crop
   selection, paint strokes, slider positions):
-  - **Cutout** — cuts the main subject(s) out of a photo with a
-    transparent background, using Vision's on-device subject-lifting API
+  - **Cutout** — cuts the subject(s) out of a photo with a transparent
+    background, using Vision's on-device subject-lifting API
     (`VNGenerateForegroundInstanceMaskRequest`, iOS 17+) — the same
     technology behind Photos' own "Lift Subject." No custom model needed.
-    Once the result has transparency, a **Background** strip appears
+    Two modes: **Everything** (the original behavior — cuts out every
+    detected subject at once) and **Tap to Select** — Vision's request
+    already segments each subject separately under the hood (it's what
+    "Everything" merges together), so tapping a specific person/object in
+    the photo cuts out just that one, useful for a group photo or a table
+    of items where "Everything" would grab all of them at once. Once the
+    result has transparency, a **Background** strip appears
     right below it — seven curated fills (five solid/gradient swatches,
     plus a blurred copy of the original photo, the common "fake bokeh"
     trick) to place behind the cutout subject. Not a generative
@@ -335,7 +341,12 @@ Swift Package resolution, no network access needed at build time.
   there's no fallback or manual touch-up (refine edges, add/remove regions)
   if it misses part of the subject or includes background it shouldn't.
   Like everything else in this app, it hasn't been run on a physical
-  device yet either.
+  device yet either. Tap to Select shares the same reliance (it's the same
+  underlying Vision request, just consumed per-instance) and picks
+  whichever detected instance's mask covers the tapped point first — if
+  two subjects' masks overlap at that exact pixel, whichever was detected
+  first wins, with no indication to the user that a second candidate was
+  even there.
 - Crop is fixed-ratio-window-plus-reposition only — no corner-drag resize
   handles or free-angle straighten yet. Rotate is 90° increments only, no
   flip (the flip transforms exist in `ImageTransform` but aren't wired to

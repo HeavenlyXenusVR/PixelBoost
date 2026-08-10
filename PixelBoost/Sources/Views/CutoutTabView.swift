@@ -1,16 +1,39 @@
 import SwiftUI
 
-/// Cutout's own tab. Unlike the other five tools there's nothing to
-/// adjust interactively (no sliders, crop handles, brush) — background
-/// removal is a single unattended action — so this is a lighter screen:
-/// a preview of the current photo, a one-line explanation, and a button.
-/// Writes straight to `viewModel.resultImage`, same as every other tool.
+/// Two modes: "Everything" (the original, still-default behavior — a
+/// single unattended action cutting out every detected subject at once)
+/// and "Tap to Select" (pick one specific subject by tapping it — see
+/// `BackgroundRemovalService`'s "Tap to Select" section). Writes straight
+/// to `viewModel.resultImage`, same as every other tool.
+private enum CutoutMode: String, CaseIterable, Identifiable {
+    case auto, tapToSelect
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .auto: return "Everything"
+        case .tapToSelect: return "Tap to Select"
+        }
+    }
+}
+
 struct CutoutTabView: View {
     @EnvironmentObject private var viewModel: UpscalerViewModel
 
     @State private var selectedFill: BackgroundFill?
     @State private var fillPreview: UIImage?
     @State private var isProcessingFill = false
+
+    // Tap to Select — see BackgroundRemovalService's "Tap to Select"
+    // section. `VNGenerateForegroundInstanceMaskRequest` already segments
+    // every distinct subject separately; this mode exposes that instead of
+    // always merging every instance the way "Everything" does.
+    @State private var mode: CutoutMode = .auto
+    @State private var detectionResult: BackgroundRemovalService.InstanceDetectionResult?
+    @State private var isDetecting = false
+    @State private var selectedInstance: BackgroundRemovalService.DetectedInstance?
+    @State private var tapPreview: UIImage?
+    @State private var isProcessingTapPreview = false
+    @State private var tapErrorMessage: String?
 
     private var currentImage: UIImage? {
         viewModel.resultImage ?? viewModel.sourceImage
@@ -25,41 +48,20 @@ struct CutoutTabView: View {
             ScrollView {
                 VStack(spacing: 20) {
                     if let currentImage {
-                        PBImageFrame {
-                            Image(uiImage: fillPreview ?? currentImage)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(maxHeight: 340)
-                        }
-
-                        Text("Cuts the main subject out of your photo with a transparent background, using on-device subject detection — the same technology behind Photos' \"Lift Subject.\"")
-                            .pbFont(.body)
-                            .foregroundStyle(PBColor.inkDim)
-                            .multilineTextAlignment(.center)
-
-                        Button {
-                            Haptics.lightImpact()
-                            viewModel.removeBackground()
-                        } label: {
-                            Label("Remove Background", systemImage: "scissors")
-                        }
-                        .buttonStyle(.pbGradient)
-                        .disabled(isAnyToolRunning)
-
-                        if viewModel.isRemovingBackground {
-                            HStack(spacing: 8) {
-                                ProgressView().tint(PBColor.accent)
-                                Text("Finding the subject to cut out…")
-                                    .pbFont(.body)
-                                    .foregroundStyle(PBColor.inkDim)
+                        Picker("Mode", selection: $mode) {
+                            ForEach(CutoutMode.allCases) { m in
+                                Text(m.title).tag(m)
                             }
                         }
+                        .pickerStyle(.segmented)
+                        .onChange(of: mode) { _, newMode in
+                            if newMode == .tapToSelect { startDetection(currentImage) }
+                        }
 
-                        if let errorMessage = viewModel.errorMessage {
-                            Text(errorMessage)
-                                .pbFont(.caption)
-                                .foregroundStyle(PBColor.bad)
-                                .multilineTextAlignment(.center)
+                        if mode == .auto {
+                            autoModeContent(currentImage)
+                        } else {
+                            tapToSelectContent(currentImage)
                         }
 
                         if currentImage.hasAlphaChannel {
@@ -80,7 +82,182 @@ struct CutoutTabView: View {
             .onChange(of: viewModel.imageVersion) { _, _ in
                 selectedFill = nil
                 fillPreview = nil
+                detectionResult = nil
+                selectedInstance = nil
+                tapPreview = nil
+                tapErrorMessage = nil
+                if mode == .tapToSelect, let currentImage {
+                    startDetection(currentImage)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func autoModeContent(_ currentImage: UIImage) -> some View {
+        PBImageFrame {
+            Image(uiImage: fillPreview ?? currentImage)
+                .resizable()
+                .scaledToFit()
+                .frame(maxHeight: 340)
+        }
+
+        Text("Cuts every subject out of your photo with a transparent background, using on-device subject detection — the same technology behind Photos' \"Lift Subject.\"")
+            .pbFont(.body)
+            .foregroundStyle(PBColor.inkDim)
+            .multilineTextAlignment(.center)
+
+        Button {
+            Haptics.lightImpact()
+            viewModel.removeBackground()
+        } label: {
+            Label("Remove Background", systemImage: "scissors")
+        }
+        .buttonStyle(.pbGradient)
+        .disabled(isAnyToolRunning)
+
+        if viewModel.isRemovingBackground {
+            HStack(spacing: 8) {
+                ProgressView().tint(PBColor.accent)
+                Text("Finding the subject to cut out…")
+                    .pbFont(.body)
+                    .foregroundStyle(PBColor.inkDim)
+            }
+        }
+
+        if let errorMessage = viewModel.errorMessage {
+            Text(errorMessage)
+                .pbFont(.caption)
+                .foregroundStyle(PBColor.bad)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    /// One tap anywhere on the photo picks whichever detected subject
+    /// covers that point (see `BackgroundRemovalService`'s "Tap to
+    /// Select" section) — for a group photo or a table of objects, where
+    /// "Everything" mode would cut out every subject at once instead of
+    /// letting you pick just one.
+    @ViewBuilder
+    private func tapToSelectContent(_ currentImage: UIImage) -> some View {
+        PBImageFrame {
+            GeometryReader { geo in
+                Image(uiImage: tapPreview ?? currentImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        // Plain `.onTapGesture` has no location-providing
+                        // overload in SwiftUI — a zero-minimum-distance
+                        // DragGesture's `.onEnded` is this codebase's
+                        // established way to get a tap's location (see
+                        // CloneStampView's source-point tap).
+                        DragGesture(minimumDistance: 0)
+                            .onEnded { value in
+                                handleTap(at: value.location, containerSize: geo.size, image: currentImage)
+                            }
+                    )
+                if isDetecting || isProcessingTapPreview {
+                    ProgressView().tint(PBColor.accent)
+                }
+            }
+        }
+        // Matches the container's own aspect ratio to the image's,
+        // instead of a fixed height with `.scaledToFit()` inside — the
+        // latter would letterbox for any photo whose aspect ratio doesn't
+        // happen to match a fixed box, and `handleTap`'s
+        // container-size-to-image-size scale math assumes the displayed
+        // image actually fills the whole GeometryReader with no letterbox
+        // bars. Same fix InpaintView/CloneStampView already use for their
+        // own tap-to-image-coordinate canvases.
+        .aspectRatio(currentImage.size, contentMode: .fit)
+        .frame(maxHeight: 340)
+
+        Text(detectionResult == nil
+            ? "Finding every subject in this photo…"
+            : "Tap a subject to cut out just that one.")
+            .pbFont(.body)
+            .foregroundStyle(PBColor.inkDim)
+            .multilineTextAlignment(.center)
+
+        if let tapErrorMessage {
+            Text(tapErrorMessage)
+                .pbFont(.caption)
+                .foregroundStyle(PBColor.bad)
+                .multilineTextAlignment(.center)
+        }
+
+        if selectedInstance != nil {
+            Button {
+                Haptics.lightImpact()
+                applyTapSelection(from: currentImage)
+            } label: {
+                Label(isProcessingTapPreview ? "Applying…" : "Cut Out Selected", systemImage: "checkmark")
+            }
+            .buttonStyle(.pbGradient)
+            .disabled(isProcessingTapPreview)
+        }
+    }
+
+    private func startDetection(_ image: UIImage) {
+        guard detectionResult == nil, !isDetecting else { return }
+        isDetecting = true
+        tapErrorMessage = nil
+        Task {
+            do {
+                detectionResult = try await BackgroundRemovalService.detectInstances(in: image)
+                ActionLoggingService.log("cutout_tap_to_select_detect", detail: ["outcome": "success"])
+            } catch {
+                tapErrorMessage = error.localizedDescription
+                ActionLoggingService.log("cutout_tap_to_select_detect", detail: ["outcome": "failed", "error": error.localizedDescription])
+            }
+            isDetecting = false
+        }
+    }
+
+    private func handleTap(at location: CGPoint, containerSize: CGSize, image: UIImage) {
+        guard let detectionResult, containerSize.width > 0, containerSize.height > 0 else { return }
+        Haptics.lightImpact()
+        // GeometryReader's coordinate space is the displayed (aspect-fit)
+        // frame — scale up to the source image's own pixel space, same
+        // "container size -> image size" mapping CloneStampView uses for
+        // its own tap-to-image coordinate conversion.
+        let scale = image.size.width / containerSize.width
+        let imagePoint = CGPoint(x: location.x * scale, y: location.y * scale)
+        guard let instance = BackgroundRemovalService.instance(at: imagePoint, in: detectionResult) else {
+            tapErrorMessage = "No subject there — try tapping directly on one."
+            return
+        }
+        tapErrorMessage = nil
+        selectedInstance = instance
+        isProcessingTapPreview = true
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                try? BackgroundRemovalService.cutout(instance, from: detectionResult.cgImage)
+            }.value
+            tapPreview = result ?? image
+            isProcessingTapPreview = false
+        }
+    }
+
+    private func applyTapSelection(from image: UIImage) {
+        guard let selectedInstance, let detectionResult else { return }
+        isProcessingTapPreview = true
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try BackgroundRemovalService.cutout(selectedInstance, from: detectionResult.cgImage)
+                }.value
+                viewModel.resultImage = result
+                Haptics.success()
+                ActionLoggingService.log("cutout_tap_to_select_apply", detail: ["outcome": "success"])
+            } catch {
+                tapErrorMessage = error.localizedDescription
+                Haptics.error()
+                ActionLoggingService.log("cutout_tap_to_select_apply", detail: ["outcome": "failed", "error": error.localizedDescription])
+            }
+            isProcessingTapPreview = false
         }
     }
 
