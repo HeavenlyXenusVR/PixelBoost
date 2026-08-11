@@ -44,7 +44,14 @@ async def get_pool() -> aiopg.Pool:
         # Postgres instance's server-level `timezone` is already UTC
         # (confirmed via `SHOW timezone`), so every TIMESTAMP column reads/
         # writes UTC by default with no per-connection setup required.
-        _pool = await aiopg.create_pool(**DB_CONFIG, minsize=1, maxsize=10)
+        # Lowered from the original aiomysql-era default of 10: this pool's
+        # connections sit on the SAME shared Postgres instance every one of
+        # the 13 music bots + Aria + SwarmPanel + ios-bridge also connect
+        # to, whose max_connections=100 was observed sitting at 102/100 in
+        # production -- upscaler-bridge's actual traffic doesn't need
+        # anywhere near 10 concurrent connections.
+        pool_max = int(os.getenv("DB_POOL_MAX_SIZE", "4"))
+        _pool = await aiopg.create_pool(**DB_CONFIG, minsize=1, maxsize=pool_max)
     return _pool
 
 
