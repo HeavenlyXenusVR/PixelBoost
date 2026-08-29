@@ -3,7 +3,10 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var provider: UpscalerProvider
     @AppStorage(ServerConfig.baseURLDefaultsKey) private var serverURLString: String = ServerConfig.defaultBaseURLString
-    @AppStorage(ServerConfig.apiKeyDefaultsKey) private var apiKeyString: String = ""
+    /// Backed by the Keychain (via `ServerConfig.userOverride`), not
+    /// `UserDefaults` — `@AppStorage` only talks to `UserDefaults`, so this
+    /// field loads/saves manually instead (`.onAppear`/`.onChange` below).
+    @State private var apiKeyString: String = ""
     @AppStorage(Haptics.enabledDefaultsKey) private var hapticsEnabled: Bool = true
     @AppStorage(EXRTonemapPreference.defaultsKey) private var exrTonemapRawValue: Int = EXRTonemap.reinhard.rawValue
     @State private var backupRestoreMessage: String?
@@ -91,6 +94,15 @@ struct SettingsView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     PBRowDivider()
+                    Toggle(isOn: $provider.autoCloudBackupEnabled) {
+                        Text("Auto Cloud Backup")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(PBColor.ink)
+                    }
+                    .tint(PBColor.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    PBRowDivider()
                     Toggle(isOn: $provider.preserveOriginal) {
                         Text("Preserve Original")
                             .font(.system(size: 15, weight: .semibold))
@@ -109,7 +121,7 @@ struct SettingsView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                 }
-                PBFootnote(text: "Auto-Save saves a single-photo Upscale result the moment it finishes, no Save tap needed (Batch already always saves per photo). Preserve Original always adds a new photo instead of overwriting the one you picked, undoing the overwrite-by-default behavior everywhere else in the app. Add to PixelBoost Album also files every save into a \"PixelBoost\" album in Photos, created the first time it's needed, so edited photos are easy to find as a set.")
+                PBFootnote(text: "Auto-Save saves a single-photo Upscale result the moment it finishes, no Save tap needed (Batch already always saves per photo). Auto Cloud Backup uploads every Upscale result and every tool's Apply result to the Upscaler-Bridge server below the moment it's produced, same expiring storage as the Cloud tab's manual backup button — off by default since it sends photo bytes to that server; needs a server URL configured to do anything. Preserve Original always adds a new photo instead of overwriting the one you picked, undoing the overwrite-by-default behavior everywhere else in the app. Add to PixelBoost Album also files every save into a \"PixelBoost\" album in Photos, created the first time it's needed, so edited photos are easy to find as a set.")
 
                 PBSectionLabel(title: "Appearance")
                 PBCard {
@@ -151,7 +163,9 @@ struct SettingsView: View {
                             .foregroundStyle(PBColor.ink)
                     }
                 }
-                PBFootnote(text: "Optional. If set, every upscale (success or failure) is logged here — source image size, technique/model used, tile config, timing — along with a few other actions (Compare Models, Cutout, Settings changes) for usage stats. Your photos are never included in this logging; a photo only ever reaches the server if you separately tap \"Backup to Cloud\" on a result. Leave the URL empty to disable all of this logging entirely. Release builds from CI have a key baked in automatically; leave the API key field blank to use that default, or set one here to override it. See server/README.md in the repo for how to deploy one.")
+                .onAppear { apiKeyString = ServerConfig.userOverride ?? "" }
+                .onChange(of: apiKeyString) { _, newValue in ServerConfig.userOverride = newValue }
+                PBFootnote(text: "Optional. If set, every upscale (success or failure) is logged here — source image size, technique/model used, tile config, timing — along with a few other actions (Compare Models, Cutout, Settings changes) for usage stats. Your photos are never included in this logging; a photo only ever reaches the server if you separately tap \"Backup to Cloud\" on a result, or turn on Automation's \"Auto Cloud Backup\" above. Leave the URL empty to disable all of this logging entirely. Release builds from CI have a key baked in automatically; leave the API key field blank to use that default, or set one here to override it — stored in the device Keychain, not in this app's plain-text preferences. See server/README.md in the repo for how to deploy one.")
 
                 PBSectionLabel(title: "Backup & Restore")
                 PBCard {

@@ -168,6 +168,10 @@ final class UpscalerProvider: ObservableObject {
     private static let denoiseBeforeUpscaleDefaultsKey = "com.pixelboost.denoiseBeforeUpscale"
     private static let sharpenAmountDefaultsKey = "com.pixelboost.sharpenAmount"
     private static let autoSaveEnabledDefaultsKey = "com.pixelboost.autoSaveEnabled"
+    /// Not `private` — `UpscaleRunner` reads this directly (it has no
+    /// `UpscalerProvider` instance to go through) to decide whether an
+    /// upscale's source/result images get uploaded alongside its metadata.
+    static let autoCloudBackupEnabledDefaultsKey = "com.pixelboost.autoCloudBackupEnabled"
     private static let preserveOriginalDefaultsKey = "com.pixelboost.preserveOriginal"
     private static let addToAlbumEnabledDefaultsKey = "com.pixelboost.addToAlbumEnabled"
     private static let watermarkEnabledDefaultsKey = "com.pixelboost.watermarkEnabled"
@@ -226,6 +230,19 @@ final class UpscalerProvider: ObservableObject {
     /// (nothing to save until a candidate's picked).
     @Published var autoSaveEnabled: Bool {
         didSet { UserDefaults.standard.set(autoSaveEnabled, forKey: Self.autoSaveEnabledDefaultsKey) }
+    }
+    /// When on, every upscale result *and* every edit ("Apply" on any tool
+    /// tab, Cutout included) is uploaded to the server's temporary scratch
+    /// storage the moment it's produced — see `UpscaleRunner.log` and
+    /// `UpscalerViewModel.resultImage`'s `didSet`. Off by default: unlike
+    /// `autoSaveEnabled` (a local Photos save) this sends photo bytes over
+    /// the network to a server the user may not have configured/trusted,
+    /// so it needs an explicit opt-in rather than inheriting "on" just
+    /// because a default `ServerConfig.baseURL` happens to be baked in.
+    /// Debug metadata logging (`/log/upscale`) is unaffected by this flag
+    /// either way — only the image bytes themselves are gated.
+    @Published var autoCloudBackupEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoCloudBackupEnabled, forKey: Self.autoCloudBackupEnabledDefaultsKey) }
     }
     /// When on, every save (single photo and Batch) always adds a new
     /// Photos asset instead of overwriting the original in place — the
@@ -304,6 +321,7 @@ final class UpscalerProvider: ObservableObject {
         let storedSharpen = UserDefaults.standard.object(forKey: Self.sharpenAmountDefaultsKey) as? Double
         sharpenAmount = storedSharpen ?? 0
         autoSaveEnabled = UserDefaults.standard.bool(forKey: Self.autoSaveEnabledDefaultsKey)
+        autoCloudBackupEnabled = UserDefaults.standard.bool(forKey: Self.autoCloudBackupEnabledDefaultsKey)
         preserveOriginal = UserDefaults.standard.bool(forKey: Self.preserveOriginalDefaultsKey)
         addToAlbumEnabled = (UserDefaults.standard.object(forKey: Self.addToAlbumEnabledDefaultsKey) as? Bool) ?? true
         watermarkEnabled = UserDefaults.standard.bool(forKey: Self.watermarkEnabledDefaultsKey)

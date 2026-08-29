@@ -114,7 +114,12 @@ up 3D-render noise — see "Render Denoise" below and
     a small grid (block size 3-32px), optionally crush the palette down to
     2-16 posterized color steps per channel (`CIColorPosterize`), then
     scale back up with nearest-neighbor interpolation so every block reads
-    as one hard-edged square instead of a blurry resize. An optional faint
+    as one hard-edged square instead of a blurry resize. A **Color Depth**
+    toggle picks 16-bit (RGB565 — 5 bits red, 6 green, 5 blue, the same
+    layout 16-bit-era console/handheld hardware rendered with, giving back
+    its real color banding) or 32-bit (full 8-bit-per-channel truecolor,
+    the default — a no-op quantization pass), applied after posterizing
+    and independent of the palette-levels slider above. An optional faint
     grid overlay makes the block boundaries explicit.
   - **Scripted Filter** — write or paste a small Lua script defining
     `apply(r, g, b, a)` (each 0...1 in, 4 numbers 0...1 out) and run it
@@ -236,8 +241,17 @@ up 3D-render noise — see "Render Denoise" below and
   `SLComposeServiceViewController` compose sheet rather than a custom
   screen; see "Known simplifications" below.
 
-All server-backed features are optional and default off — the app is
-fully functional and fully offline with no server configured.
+All server-backed features work only when a server URL is configured (a
+working default is baked in, pointed at the live deployment above), and the
+app is fully functional with the URL field cleared. Uploading actual photo
+bytes (Cloud Backup's manual button, and the "Auto Cloud Backup" automation
+below) additionally needs its own opt-in even with a server configured —
+lightweight debug metadata (timings/dimensions/success, no image bytes) is
+the only thing that reaches the server without a separate toggle.
+- **Auto Cloud Backup** (Settings, off by default) — uploads every Upscale
+  result and every editing tool's Apply result to the server's temporary
+  scratch storage the instant it's produced, instead of relying on the
+  Cloud tab's manual backup button each time.
 
 ## How it works
 
@@ -264,7 +278,7 @@ fully functional and fully offline with no server configured.
 
 `server/` (`upscaler-bridge`, mirroring Lumisound's `ios-bridge` pattern) —
 **live**, deployed at `https://upscaler-bridge.xenusanimations.studio`. A
-FastAPI + MariaDB service backing everything server-side is optional in
+FastAPI + PostgreSQL service backing everything server-side is optional in
 the app:
 
 - Debug logging (`upscale_history`) — every upscale attempt, for

@@ -13,7 +13,37 @@ struct ModelComparisonResult: Identifiable {
 @MainActor
 final class UpscalerViewModel: ObservableObject {
     @Published var sourceImage: UIImage? { didSet { imageVersion += 1 } }
-    @Published var resultImage: UIImage? { didSet { imageVersion += 1 } }
+    /// Every editing tab (Filters, Adjust, Crop, Cutout, ...) writes its
+    /// "Apply" result straight to this property, so it's the one place
+    /// that sees every image change regardless of which tool produced it —
+    /// the natural hook for Settings' "Auto Cloud Backup" toggle to cover
+    /// "any image change," not just Upscale. `upscale()`/
+    /// `pickComparisonResult()` set `skipNextAutoCloudBackup` first: those
+    /// two assignments came from a run `UpscaleRunner.log` already uploaded
+    /// (when the setting's on), so this would otherwise double-upload them.
+    @Published var resultImage: UIImage? {
+        didSet {
+            imageVersion += 1
+            if skipNextAutoCloudBackup {
+                skipNextAutoCloudBackup = false
+            } else {
+                autoUploadResultIfEnabled()
+            }
+        }
+    }
+    private var skipNextAutoCloudBackup = false
+
+    private func autoUploadResultIfEnabled() {
+        guard provider.autoCloudBackupEnabled, let image = resultImage else { return }
+        Task.detached(priority: .background) {
+            do {
+                try await ImportExportService.upload(image, kind: .exports)
+                await CloudBackupStatus.shared.reportSuccess()
+            } catch {
+                await CloudBackupStatus.shared.reportFailure(error)
+            }
+        }
+    }
     /// Bumped whenever `sourceImage`/`resultImage` change. Every editing
     /// tab is a persistent tab (see `RootView`) rather than a modal handed
     /// a fresh image each time it's opened, so each one needs some way to
@@ -114,6 +144,7 @@ final class UpscalerViewModel: ObservableObject {
                 Task { @MainActor in self?.progress = value }
             }
             if let result = outcome.result {
+                skipNextAutoCloudBackup = true
                 self.resultImage = result.image
                 Haptics.success()
                 if provider.autoSaveEnabled {
@@ -210,6 +241,10 @@ final class UpscalerViewModel: ObservableObject {
 
     /// Called when the user taps "Use This" on one of `comparisonResults`.
     func pickComparisonResult(_ result: ModelComparisonResult) {
+        // Every candidate already went through UpscaleRunner.log during
+        // compareModels() (uploaded already if the setting's on) — skip so
+        // picking one here doesn't upload it a second time.
+        skipNextAutoCloudBackup = true
         resultImage = result.image
         comparisonResults = []
     }

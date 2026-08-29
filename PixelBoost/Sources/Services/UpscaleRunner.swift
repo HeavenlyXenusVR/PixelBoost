@@ -95,18 +95,37 @@ enum UpscaleRunner {
             os_version: UIDevice.current.systemVersion,
             device_model: UIDevice.current.model
         )
-        // Auto-uploads the source/result pair to the same expiring scratch
-        // storage the manual "Cloud Backup" button already uses (see
-        // ImportExportService) — tied together via history_id so a model's
-        // actual input/output can be inspected server-side, not just the
-        // dimensions/timing metadata above. Every upload here is still
-        // TTL'd (default 24h, see server/README.md), not permanent
-        // retention — this is a debugging aid, not a photo archive.
+        // Metadata (timing/dimensions/success) always gets logged — that's
+        // the always-on debug telemetry described in the README. The image
+        // bytes themselves are a separate, opt-in concern (Settings' "Auto
+        // Cloud Backup") gated here on autoCloudBackupEnabledDefaultsKey:
+        // UpscaleRunner has no UpscalerProvider instance to read the
+        // published property from directly, so it reads the same
+        // UserDefaults key the property mirrors. When on, this uploads the
+        // source/result pair to the same expiring scratch storage the
+        // manual "Cloud Backup" button uses (see ImportExportService) —
+        // tied together via history_id so a model's actual input/output
+        // can be inspected server-side, not just the dimensions/timing
+        // metadata above. Every upload here is still TTL'd (default 24h,
+        // see server/README.md), not permanent retention.
+        let autoCloudBackupEnabled = UserDefaults.standard.bool(forKey: UpscalerProvider.autoCloudBackupEnabledDefaultsKey)
         Task.detached(priority: .background) {
-            guard let historyID = await UpscaleLoggingService.log(entry) else { return }
-            try? await ImportExportService.upload(sourceImage, kind: .imports)
+            let historyID = await UpscaleLoggingService.log(entry)
+            guard autoCloudBackupEnabled, let historyID else { return }
+            // Independent, best-effort attempts (a failed source upload
+            // shouldn't skip the arguably-more-important result upload) —
+            // whichever fails last just wins the status banner, which is
+            // fine for a lightweight "something's not getting backed up"
+            // signal rather than a precise per-upload report.
+            var lastError: Error?
+            do { try await ImportExportService.upload(sourceImage, kind: .imports) } catch { lastError = error }
             if let outputImage {
-                try? await ImportExportService.upload(outputImage, kind: .exports, historyID: historyID)
+                do { try await ImportExportService.upload(outputImage, kind: .exports, historyID: historyID) } catch { lastError = error }
+            }
+            if let lastError {
+                await CloudBackupStatus.shared.reportFailure(lastError)
+            } else {
+                await CloudBackupStatus.shared.reportSuccess()
             }
         }
     }

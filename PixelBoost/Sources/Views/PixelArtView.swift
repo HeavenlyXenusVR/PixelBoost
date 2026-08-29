@@ -10,6 +10,7 @@ struct PixelArtView: View {
     @State private var blockSize: Double = 10
     @State private var posterize = true
     @State private var colorLevels: Double = 6
+    @State private var colorDepth: PixelArtService.ColorDepth = .bit32
     @State private var showGrid = false
     @State private var previewImage: UIImage?
     @State private var previewSource: UIImage?
@@ -49,6 +50,18 @@ struct PixelArtView: View {
                                     labeledSlider("Palette Levels", value: $colorLevels, range: 2...16, format: "%.0f")
                                 }
 
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Color Depth")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(PBColor.ink)
+                                    Picker("Color Depth", selection: $colorDepth) {
+                                        ForEach(PixelArtService.ColorDepth.allCases) { depth in
+                                            Text(depth.rawValue).tag(depth)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                }
+
                                 Toggle(isOn: $showGrid) {
                                     Text("Show Grid Lines")
                                         .font(.system(size: 13, weight: .semibold))
@@ -80,6 +93,7 @@ struct PixelArtView: View {
             .onChange(of: blockSize) { _, _ in updatePreview() }
             .onChange(of: posterize) { _, _ in updatePreview() }
             .onChange(of: colorLevels) { _, _ in updatePreview() }
+            .onChange(of: colorDepth) { _, _ in updatePreview() }
             .onChange(of: showGrid) { _, _ in updatePreview() }
             .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
             .onAppear { refreshFromCurrentImage() }
@@ -118,6 +132,7 @@ struct PixelArtView: View {
         PixelArtService.Options(
             blockSize: Int(blockSize),
             colorLevels: posterize ? Int(colorLevels) : nil,
+            colorDepth: colorDepth,
             showGrid: showGrid
         )
     }

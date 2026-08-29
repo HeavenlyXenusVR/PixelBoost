@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject private var viewModel: UpscalerViewModel
     @EnvironmentObject private var provider: UpscalerProvider
+    @StateObject private var cloudBackupStatus = CloudBackupStatus.shared
     @State private var pickerItem: PhotosPickerItem?
     @State private var zoomedImage: UIImage?
     @State private var isBackingUp = false
@@ -20,6 +21,10 @@ struct ContentView: View {
                 VStack(spacing: 18) {
                     if !provider.modelChoice.isBundled {
                         modelMissingBanner
+                    }
+
+                    if provider.autoCloudBackupEnabled, let message = cloudBackupStatus.lastFailureMessage {
+                        autoCloudBackupFailedBanner(message)
                     }
 
                     imagePreview
@@ -388,6 +393,30 @@ struct ContentView: View {
                 .pbFont(.caption)
                 .foregroundStyle(PBColor.inkFaint)
         }
+    }
+
+    /// Shown right on the main screen (rather than buried in Settings or
+    /// the Cloud tab) since the failure it's reporting happened
+    /// unattended — "Auto Cloud Backup" is on but the last upload silently
+    /// failed, and this is the screen the user's actually looking at when
+    /// that happens. Tappable to dismiss, same as acknowledging any other
+    /// transient banner; it'll reappear on the next failed attempt.
+    private func autoCloudBackupFailedBanner(_ message: String) -> some View {
+        Button {
+            cloudBackupStatus.dismiss()
+        } label: {
+            Label("Auto Cloud Backup failed: \(message)", systemImage: "icloud.slash")
+                .pbFont(.caption)
+                .foregroundStyle(PBColor.warn)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(PBColor.warn.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(PBColor.warn.opacity(0.22), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private var modelMissingBanner: some View {
