@@ -116,10 +116,13 @@ up 3D-render noise — see "Render Denoise" below and
     scale back up with nearest-neighbor interpolation so every block reads
     as one hard-edged square instead of a blurry resize. A **Color Depth**
     toggle picks 16-bit (RGB565 — 5 bits red, 6 green, 5 blue, the same
-    layout 16-bit-era console/handheld hardware rendered with, giving back
-    its real color banding) or 32-bit (full 8-bit-per-channel truecolor,
-    the default — a no-op quantization pass), applied after posterizing
-    and independent of the palette-levels slider above. An optional faint
+    layout 16-bit-era console/handheld hardware rendered with, plus a 4x4
+    ordered/Bayer dither pattern — flat rounding alone at 32-64 levels per
+    channel turns out to barely band on an ordinary photo; the dither
+    texture is what actually reads as reduced color depth) or 32-bit (full
+    8-bit-per-channel truecolor, the default — a no-op quantization pass),
+    applied after posterizing and independent of the palette-levels slider
+    above. An optional faint
     grid overlay makes the block boundaries explicit.
   - **Scripted Filter** — write or paste a small Lua script defining
     `apply(r, g, b, a)` (each 0...1 in, 4 numbers 0...1 out) and run it

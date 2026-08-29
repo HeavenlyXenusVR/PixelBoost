@@ -95,6 +95,21 @@ enum PixelArtService {
         return withGrid(blocky, blockSize: blockSize, size: outputSize)
     }
 
+    /// 4x4 ordered (Bayer) dither matrix, values 0...15 — the standard
+    /// pattern classic 16-bit-and-under hardware/software used to fake
+    /// extra color resolution out of a small palette. Plain nearest-level
+    /// rounding alone (no dithering) turns out to be nearly invisible for
+    /// 5-6 bits/channel on an ordinary photo: 32-64 levels is still fine
+    /// enough that flat quantization barely bands. The dither pattern is
+    /// what actually reads as "reduced color depth" at a glance, which is
+    /// the whole point of offering the toggle.
+    private static let bayerMatrix: [[Double]] = [
+        [0, 8, 2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1, 9],
+        [15, 7, 13, 5],
+    ]
+
     /// Quantizes each channel down to `channelBits.r/g/b` levels, run on
     /// the already-shrunk (small-grid) image rather than the full-size
     /// photo — cheap enough for a plain per-pixel loop since it's at most
@@ -113,31 +128,41 @@ enum PixelArtService {
         ) else { return nil }
         ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        let rTable = quantizationTable(bits: channelBits.r)
-        let gTable = quantizationTable(bits: channelBits.g)
-        let bTable = quantizationTable(bits: channelBits.b)
-        var i = 0
-        while i < pixels.count {
-            pixels[i] = rTable[Int(pixels[i])]
-            pixels[i + 1] = gTable[Int(pixels[i + 1])]
-            pixels[i + 2] = bTable[Int(pixels[i + 2])]
-            i += 4
+        let rStep = channelStep(bits: channelBits.r)
+        let gStep = channelStep(bits: channelBits.g)
+        let bStep = channelStep(bits: channelBits.b)
+        for y in 0..<height {
+            // -0.5...0.5 of one quantization step — nudges this pixel's
+            // rounding up or down depending on its position in the 4x4
+            // tile, so two neighboring pixels that would otherwise both
+            // round to the same flat level can instead land on adjacent
+            // levels and alternate, which is what reads as a dither
+            // texture rather than a flat color block.
+            let rowDither = bayerMatrix[y % 4]
+            for x in 0..<width {
+                let dither = (rowDither[x % 4] + 0.5) / 16.0 - 0.5
+                let offset = y * bytesPerRow + x * 4
+                pixels[offset] = quantizeChannel(pixels[offset], step: rStep, dither: dither)
+                pixels[offset + 1] = quantizeChannel(pixels[offset + 1], step: gStep, dither: dither)
+                pixels[offset + 2] = quantizeChannel(pixels[offset + 2], step: bStep, dither: dither)
+            }
         }
         return ctx.makeImage()
     }
 
-    /// Maps every 0...255 input value to the nearest representable value
-    /// under `bits`-per-channel precision — e.g. 5 bits -> 32 evenly-spaced
-    /// output levels across the full 0...255 range, rather than just
-    /// truncating the low bits (which would darken highlights toward the
-    /// nearest level *below* them instead of the nearest level overall).
-    private static func quantizationTable(bits: Int) -> [UInt8] {
-        let levels = 1 << bits
-        let step = 255.0 / Double(levels - 1)
-        return (0...255).map { value in
-            let level = (Double(value) / step).rounded()
-            return UInt8(min(255, max(0, (level * step).rounded())))
-        }
+    private static func channelStep(bits: Int) -> Double {
+        255.0 / Double((1 << bits) - 1)
+    }
+
+    /// Rounds `value` to the nearest representable level under `step`,
+    /// offset by `dither` (a fraction of one step) before rounding — so the
+    /// same input value can land on either of its two nearest levels
+    /// depending on dither, instead of always the same one.
+    private static func quantizeChannel(_ value: UInt8, step: Double, dither: Double) -> UInt8 {
+        let level = (Double(value) / step + dither).rounded()
+        let maxLevel = (255.0 / step).rounded()
+        let clampedLevel = min(max(level, 0), maxLevel)
+        return UInt8(min(255, max(0, (clampedLevel * step).rounded())))
     }
 
     private static func draw(_ cgImage: CGImage, into size: CGSize, interpolation: CGInterpolationQuality) -> CGImage? {
