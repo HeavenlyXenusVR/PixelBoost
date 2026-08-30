@@ -572,8 +572,17 @@ enum PixelArtService {
         format.scale = 1
         format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = UIImage(cgImage: cgImage)
         return renderer.image { rendererContext in
-            rendererContext.cgContext.draw(cgImage, in: CGRect(origin: .zero, size: size))
+            // UIImage-level draw, not the raw CGContext.draw(cgImage:in:)
+            // this used to call — the latter draws a CGImage's bytes
+            // straight through without correcting for
+            // UIGraphicsImageRenderer's flipped (UIKit-style) coordinate
+            // space, so the result came out upside down. Every other
+            // drawing helper in this app (Watermark, FiltersView,
+            // AdjustmentsView, ...) already draws via UIImage for exactly
+            // this reason — this file was the one inconsistent holdout.
+            image.draw(in: CGRect(origin: .zero, size: size))
             let path = CGMutablePath()
             for y in 0..<mask.height {
                 for x in 0..<mask.width {
@@ -603,9 +612,13 @@ enum PixelArtService {
         format.scale = 1
         format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let sourceImage = UIImage(cgImage: cgImage)
         let image = renderer.image { rendererContext in
             rendererContext.cgContext.interpolationQuality = interpolation
-            rendererContext.cgContext.draw(cgImage, in: CGRect(origin: .zero, size: size))
+            // See withOutline's comment — UIImage-level draw, not raw
+            // CGContext.draw(cgImage:in:), so this doesn't come out
+            // upside down inside UIGraphicsImageRenderer's flipped context.
+            sourceImage.draw(in: CGRect(origin: .zero, size: size))
         }
         return image.cgImage
     }
@@ -615,8 +628,9 @@ enum PixelArtService {
         format.scale = 1
         format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = UIImage(cgImage: cgImage)
         return renderer.image { rendererContext in
-            rendererContext.cgContext.draw(cgImage, in: CGRect(origin: .zero, size: size))
+            image.draw(in: CGRect(origin: .zero, size: size))
             let gridContext = rendererContext.cgContext
             gridContext.setStrokeColor(UIColor.black.withAlphaComponent(0.18).cgColor)
             gridContext.setLineWidth(1)
