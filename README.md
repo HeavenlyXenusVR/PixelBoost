@@ -127,14 +127,25 @@ up 3D-render noise — see "Render Denoise" below and
     a no-op quantization pass), applied after posterizing and independent
     of the palette-levels slider above. A **Retro Palette** picker (Game
     Boy's 4-shade green LCD, PICO-8's 16 colors, an NES-ish dozen, CGA's
-    black/cyan/magenta/white, or an 8-step Grayscale) snaps every pixel to
-    the nearest color in that fixed, named set instead — a stronger,
-    more authentic result than posterize/Color Depth's independent
-    per-channel crush, since it takes over from both when picked. A
-    **Sprite Outline** toggle traces a thin black border along every block
-    boundary whose neighboring colors differ enough, the hard-edged look
-    classic pixel-art sprites use to separate shapes. An optional faint
-    grid overlay makes the block boundaries explicit.
+    black/cyan/magenta/white, an 8-step Grayscale, or **Auto from Photo** —
+    a 2-32 color palette extracted from the photo's own colors via a plain
+    k-means pass) snaps every pixel to the nearest color in that palette
+    instead — a stronger, more authentic result than posterize/Color
+    Depth's independent per-channel crush, since it takes over from both
+    when picked. A **Sprite Outline** toggle traces a thin black border
+    along every block boundary whose neighboring colors differ enough, the
+    hard-edged look classic pixel-art sprites use to separate shapes. A
+    **Transparent Background** toggle chroma-keys out whichever color is
+    most common across the four corners of the result — a quick way to
+    turn a plain-backdrop photo into a game-ready sprite without a full
+    Cutout pass. **Export as Sprite** switches the output from a
+    full-resolution photo with blocky squares to the actual pixelated grid
+    itself, sized so its longer side is exactly 16/32/64/128px — a real
+    sprite-sheet-ready asset rather than a preview-scale "still photo
+    resolution" result (Block Size and the grid overlay don't apply to
+    this path, since there's no enlarging step for either). An optional
+    faint grid overlay (full-resolution output only) makes the block
+    boundaries explicit.
   - **Scripted Filter** — write or paste a small Lua script defining
     `apply(r, g, b, a)` (each 0...1 in, 4 numbers 0...1 out) and run it
     over the photo one pixel at a time — a genuinely user-programmable
@@ -221,7 +232,15 @@ up 3D-render noise — see "Render Denoise" below and
   Render (Real-CUGAN — a stylized/flat-shaded render or NPR toon-shader
   output specifically, see [`Models/README.md`](Models/README.md)), plus
   Fast (Lanczos, instant) / Standard / Best (Core ML, trading tile-seam
-  quality for speed via context overlap).
+  quality for speed via context overlap) / **Custom** (that same tile
+  overlap as a direct 1-32px slider, no server-backed preset needed).
+- **Upscale Strength** (Settings, 0-100%, default 100) — cross-dissolves
+  the model's result with a plain Lanczos resize of the original at the
+  same final size. The model still runs at full strength either way (so
+  History/timing reflect the real model) — this dials back an
+  over-aggressive or artifact-prone result's visible effect without
+  switching models entirely, down to 0% (plain resize, model result
+  discarded).
 - **Custom presets** — name your own model+overlap combination beyond the
   built-in three; server-backed (needs a server configured).
 - **iCloud presets** — the same named model+overlap combinations, but

@@ -88,11 +88,15 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
 /// How much time to trade for quality. Tile size (128) is baked into the
 /// bundled models' fixed compiled input shape and can't vary per preset —
 /// the only safely-adjustable axis is context overlap, plus the choice of
-/// whether to use a model at all.
+/// whether to use a model at all. `.custom` hands that axis directly to the
+/// user (Settings' Tile Overlap slider) instead of a fixed preset value —
+/// previously the only way to pick an arbitrary overlap was a server-backed
+/// Custom Preset; this needs no server.
 enum UpscaleQuality: String, CaseIterable, Identifiable {
     case fast
     case standard
     case best
+    case custom
 
     var id: String { rawValue }
 
@@ -101,15 +105,19 @@ enum UpscaleQuality: String, CaseIterable, Identifiable {
         case .fast: return "Fast"
         case .standard: return "Standard"
         case .best: return "Best"
+        case .custom: return "Custom"
         }
     }
 
     /// nil means "skip the model entirely" — `.fast` uses `LanczosUpscaler`.
-    var overlap: Int? {
+    /// `.custom`'s value comes from the caller (`UpscalerProvider.customOverlap`)
+    /// rather than a fixed constant here.
+    func overlap(customOverlap: Int) -> Int? {
         switch self {
         case .fast: return nil
         case .standard: return 8
         case .best: return 16
+        case .custom: return customOverlap
         }
     }
 }
@@ -162,6 +170,8 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 final class UpscalerProvider: ObservableObject {
     private static let modelChoiceDefaultsKey = "com.pixelboost.modelChoice"
     private static let qualityDefaultsKey = "com.pixelboost.quality"
+    private static let customOverlapDefaultsKey = "com.pixelboost.customOverlap"
+    private static let upscaleStrengthDefaultsKey = "com.pixelboost.upscaleStrength"
     private static let scaleFactorDefaultsKey = "com.pixelboost.scaleFactor"
     private static let exportFormatDefaultsKey = "com.pixelboost.exportFormat"
     private static let exportQualityDefaultsKey = "com.pixelboost.exportQuality"
@@ -194,6 +204,22 @@ final class UpscalerProvider: ObservableObject {
     }
     @Published var quality: UpscaleQuality {
         didSet { UserDefaults.standard.set(quality.rawValue, forKey: Self.qualityDefaultsKey) }
+    }
+    /// Only consulted when `quality == .custom` — see `UpscaleQuality.overlap(customOverlap:)`.
+    /// 1...32 covers the full range `.fast`(nil)/.standard(8)/.best(16)
+    /// already span, plus room past `.best` for anyone who wants to trade
+    /// even more time for tile-seam quality.
+    @Published var customOverlap: Int {
+        didSet { UserDefaults.standard.set(customOverlap, forKey: Self.customOverlapDefaultsKey) }
+    }
+    /// 1.0 (default) is the model's raw output, unchanged. Below that,
+    /// `UpscaleRunner` cross-dissolves the model's result with a plain
+    /// Lanczos resize of the original at the same final size — a way to
+    /// dial back an over-aggressive/artifact-prone model's effect without
+    /// switching models entirely, down to 0.0 (the model runs, but its
+    /// result is entirely replaced by the plain resize).
+    @Published var upscaleStrength: Double {
+        didSet { UserDefaults.standard.set(upscaleStrength, forKey: Self.upscaleStrengthDefaultsKey) }
     }
     @Published var scaleFactor: UpscaleFactor {
         didSet { UserDefaults.standard.set(scaleFactor.rawValue, forKey: Self.scaleFactorDefaultsKey) }
@@ -311,6 +337,10 @@ final class UpscalerProvider: ObservableObject {
             .flatMap(UpscaleModelChoice.init(rawValue:)) ?? .auto
         quality = UserDefaults.standard.string(forKey: Self.qualityDefaultsKey)
             .flatMap(UpscaleQuality.init(rawValue:)) ?? .standard
+        let storedCustomOverlap = UserDefaults.standard.object(forKey: Self.customOverlapDefaultsKey) as? Int
+        customOverlap = storedCustomOverlap ?? 12
+        let storedUpscaleStrength = UserDefaults.standard.object(forKey: Self.upscaleStrengthDefaultsKey) as? Double
+        upscaleStrength = storedUpscaleStrength ?? 1.0
         let storedScale = UserDefaults.standard.object(forKey: Self.scaleFactorDefaultsKey) as? Int
         scaleFactor = storedScale.flatMap(UpscaleFactor.init(rawValue:)) ?? .x4
         exportFormat = UserDefaults.standard.string(forKey: Self.exportFormatDefaultsKey)
@@ -347,7 +377,7 @@ final class UpscalerProvider: ObservableObject {
     /// pick — `nil`-safe (falls back to the first bundled candidate)
     /// since not every caller has an image ready up front.
     func resolveCurrent(for sourceImage: UIImage? = nil) async -> ImageUpscaling {
-        guard let overlap = quality.overlap else {
+        guard let overlap = quality.overlap(customOverlap: customOverlap) else {
             return LanczosUpscaler(scaleFactor: Double(scaleFactor.rawValue))
         }
 
@@ -371,7 +401,7 @@ final class UpscalerProvider: ObservableObject {
     /// to run the full photo through every one of them and let the user
     /// choose by eye instead of a heuristic choosing for them.
     func resolveAllBundled() async -> [(choice: UpscaleModelChoice, upscaler: ImageUpscaling)] {
-        guard let overlap = quality.overlap else { return [] }
+        guard let overlap = quality.overlap(customOverlap: customOverlap) else { return [] }
         let candidates = UpscaleModelChoice.allCases.filter { $0 != .auto && $0.isBundled }
 
         var resolved: [(UpscaleModelChoice, ImageUpscaling)] = []

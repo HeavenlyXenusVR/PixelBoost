@@ -48,12 +48,18 @@ enum PixelArtService {
         case nesish = "NES-ish"
         case cga = "CGA"
         case grayscale = "Grayscale"
+        /// Not a fixed set — `colors` returns nil here too, same as
+        /// `.none`. `apply()` special-cases this one to derive a palette
+        /// from the photo itself (`Options.autoPaletteColorCount` colors,
+        /// via `kMeansPalette`) instead of a named hardware palette, which
+        /// is why it can't just return a fixed array like the others.
+        case auto = "Auto from Photo"
         var id: String { rawValue }
 
         /// nil for `.none` — the "don't map to a fixed palette" case.
         var colors: [(r: UInt8, g: UInt8, b: UInt8)]? {
             switch self {
-            case .none:
+            case .none, .auto:
                 return nil
             case .gameBoy:
                 // The original DMG's four-shade green-gray LCD.
@@ -106,6 +112,23 @@ enum PixelArtService {
         /// hardware palette instead of `colorLevels`/`colorDepth`'s
         /// independent-per-channel crush. See `RetroPalette`.
         var palette: RetroPalette = .none
+        /// Only consulted when `palette == .auto` — how many colors
+        /// `kMeansPalette` should extract from the photo's own colors.
+        var autoPaletteColorCount: Int = 8
+        /// Treats whichever color is most common across the four corners
+        /// of the pixelated result as "background" and makes every
+        /// matching pixel transparent — a quick chroma-key for turning a
+        /// plain-background photo into a game-ready sprite, without a
+        /// proper subject cutout (see the Cutout tool for that).
+        var transparentBackground: Bool = false
+        /// When set, output is the small pixelated grid itself, sized so
+        /// its longer side is exactly this many actual pixels — a real
+        /// sprite-sheet-ready asset (e.g. 32x32), not `blockSize`'s
+        /// preview-scale "blocky but still photo-resolution" result. `nil`
+        /// (default) keeps the existing block-enlarged full-resolution
+        /// output; `blockSize`/`showGrid` are ignored when this is set,
+        /// since there's no enlarging step for either to apply to.
+        var spriteSize: Int?
         /// 1.0 is unchanged; >1 punches up color intensity before
         /// pixelating (classic pixel-art palettes read as more vivid than
         /// an ordinary photo's colors), <1 mutes it. Applied before
@@ -130,12 +153,21 @@ enum PixelArtService {
         let width = cgImage.width
         let height = cgImage.height
         let blockSize = max(1, options.blockSize)
-        let smallWidth = max(1, width / blockSize)
-        let smallHeight = max(1, height / blockSize)
-        // Snapped back to a whole number of blocks so the upscale step below
-        // lands on exact block boundaries — avoids a partial, slightly-off
-        // block at the right/bottom edge.
-        let outputSize = CGSize(width: smallWidth * blockSize, height: smallHeight * blockSize)
+
+        let smallWidth: Int
+        let smallHeight: Int
+        if let spriteSize = options.spriteSize {
+            // Fit to the longer side, same aspect-preserving math the
+            // preview's own downscaling uses elsewhere in this app —
+            // `blockSize` plays no role here, the grid *is* the sprite.
+            let longSide = max(1, max(width, height))
+            let scale = Double(max(1, spriteSize)) / Double(longSide)
+            smallWidth = max(1, Int((Double(width) * scale).rounded()))
+            smallHeight = max(1, Int((Double(height) * scale).rounded()))
+        } else {
+            smallWidth = max(1, width / blockSize)
+            smallHeight = max(1, height / blockSize)
+        }
 
         guard let shrunk = draw(
             cgImage, into: CGSize(width: smallWidth, height: smallHeight), interpolation: .default
@@ -154,8 +186,12 @@ enum PixelArtService {
             saturated = shrunk
         }
 
-        let colored: CGImage
-        if let paletteColors = options.palette.colors {
+        var colored: CGImage
+        if options.palette == .auto {
+            guard let buffer = readRGBA(saturated) else { return nil }
+            let autoColors = kMeansPalette(buffer, k: max(2, min(32, options.autoPaletteColorCount)))
+            colored = mapToPalette(saturated, colors: autoColors) ?? saturated
+        } else if let paletteColors = options.palette.colors {
             colored = mapToPalette(saturated, colors: paletteColors) ?? saturated
         } else {
             let posterized: CGImage
@@ -177,6 +213,30 @@ enum PixelArtService {
                 colored = posterized
             }
         }
+
+        if options.transparentBackground, let keyed = withTransparentBackground(colored) {
+            colored = keyed
+        }
+
+        if options.spriteSize != nil {
+            // Native pixel-per-pixel sprite output — no enlarge step, so
+            // there's no "boundary between two pixels" to draw a separate
+            // outline stroke along the way the block-enlarged path below
+            // does; simply recoloring flagged edge pixels themselves is
+            // the closest equivalent at this scale, at the cost of eating
+            // one pixel into whichever side gets flagged rather than
+            // drawing a clean line between the two.
+            if options.outline, var buffer = readRGBA(colored) {
+                paintEdgePixelsBlack(&buffer, mask: computeEdgeMask(buffer))
+                colored = makeImage(buffer) ?? colored
+            }
+            return UIImage(cgImage: colored, scale: 1, orientation: .up)
+        }
+
+        // Snapped back to a whole number of blocks so the upscale step
+        // below lands on exact block boundaries — avoids a partial,
+        // slightly-off block at the right/bottom edge.
+        let outputSize = CGSize(width: smallWidth * blockSize, height: smallHeight * blockSize)
 
         // Computed at the small (one-pixel-per-block) scale, same as
         // quantize/mapToPalette above, then drawn as thin lines at the
@@ -263,6 +323,128 @@ enum PixelArtService {
             offset += 4
         }
         return makeImage(buffer)
+    }
+
+    /// Derives a `k`-color palette from `buffer`'s own pixels via a plain
+    /// Lloyd's-algorithm k-means over RGB space — run on the already-small
+    /// (one-pixel-per-block) grid, so even a fixed handful of iterations
+    /// over every pixel stays cheap. Centroids seed from `k` evenly-spaced
+    /// pixels across the image (not random) so the result is deterministic
+    /// for the same input — matters here since this feeds a live preview
+    /// that re-runs on every slider tweak, and a flickering-between-runs
+    /// palette would read as a bug.
+    private static func kMeansPalette(_ buffer: RGBABuffer, k: Int, iterations: Int = 6) -> [(r: UInt8, g: UInt8, b: UInt8)] {
+        let totalPixels = buffer.width * buffer.height
+        guard totalPixels > 0, k > 0 else { return [(128, 128, 128)] }
+        let step = max(1, totalPixels / k)
+        var centroids: [(r: Double, g: Double, b: Double)] = (0..<k).map { i in
+            let pixelIndex = min(i * step, totalPixels - 1)
+            let offset = pixelIndex * 4
+            return (Double(buffer.pixels[offset]), Double(buffer.pixels[offset + 1]), Double(buffer.pixels[offset + 2]))
+        }
+
+        for _ in 0..<iterations {
+            var sums = [(r: Double, g: Double, b: Double, count: Int)](repeating: (0, 0, 0, 0), count: centroids.count)
+            var offset = 0
+            while offset < buffer.pixels.count {
+                let r = Double(buffer.pixels[offset]), g = Double(buffer.pixels[offset + 1]), b = Double(buffer.pixels[offset + 2])
+                var bestIndex = 0
+                var bestDistance = Double.greatestFiniteMagnitude
+                for (index, centroid) in centroids.enumerated() {
+                    let dr = r - centroid.r, dg = g - centroid.g, db = b - centroid.b
+                    let distance = dr * dr + dg * dg + db * db
+                    if distance < bestDistance {
+                        bestDistance = distance
+                        bestIndex = index
+                    }
+                }
+                sums[bestIndex].r += r
+                sums[bestIndex].g += g
+                sums[bestIndex].b += b
+                sums[bestIndex].count += 1
+                offset += 4
+            }
+            for index in centroids.indices where sums[index].count > 0 {
+                let count = Double(sums[index].count)
+                centroids[index] = (sums[index].r / count, sums[index].g / count, sums[index].b / count)
+            }
+        }
+
+        return centroids.map { centroid in
+            (
+                UInt8(min(255, max(0, centroid.r.rounded()))),
+                UInt8(min(255, max(0, centroid.g.rounded()))),
+                UInt8(min(255, max(0, centroid.b.rounded())))
+            )
+        }
+    }
+
+    /// Packs a pixel's RGB into one comparable key.
+    private static func colorKey(_ r: UInt8, _ g: UInt8, _ b: UInt8) -> Int {
+        Int(r) << 16 | Int(g) << 8 | Int(b)
+    }
+
+    /// Finds whichever color is most common across the four corners of
+    /// `cgImage` and makes every pixel within a fixed distance of it fully
+    /// transparent — a plain chroma-key, not a proper subject segmentation
+    /// (see `BackgroundRemovalService`/Cutout for that); works well enough
+    /// for the common case this targets, a sprite photographed or rendered
+    /// against one flat backdrop color.
+    private static func withTransparentBackground(_ cgImage: CGImage) -> CGImage? {
+        guard var buffer = readRGBA(cgImage), buffer.width > 0, buffer.height > 0 else { return nil }
+        func pixel(_ x: Int, _ y: Int) -> (UInt8, UInt8, UInt8) {
+            let offset = y * buffer.bytesPerRow + x * 4
+            return (buffer.pixels[offset], buffer.pixels[offset + 1], buffer.pixels[offset + 2])
+        }
+        let corners = [
+            pixel(0, 0), pixel(buffer.width - 1, 0),
+            pixel(0, buffer.height - 1), pixel(buffer.width - 1, buffer.height - 1),
+        ]
+        var counts: [Int: Int] = [:]
+        for corner in corners {
+            counts[colorKey(corner.0, corner.1, corner.2), default: 0] += 1
+        }
+        guard let backgroundKey = counts.max(by: { $0.value < $1.value })?.key else { return nil }
+        let bgR = (backgroundKey >> 16) & 0xFF, bgG = (backgroundKey >> 8) & 0xFF, bgB = backgroundKey & 0xFF
+
+        let threshold = 40
+        var offset = 0
+        while offset < buffer.pixels.count {
+            let dr = Int(buffer.pixels[offset]) - bgR
+            let dg = Int(buffer.pixels[offset + 1]) - bgG
+            let db = Int(buffer.pixels[offset + 2]) - bgB
+            if abs(dr) + abs(dg) + abs(db) <= threshold {
+                // Zeroing RGB alongside alpha keeps this a valid
+                // premultiplied pixel (premultiplied color can never
+                // exceed its own alpha) — leaving stale color behind a
+                // zero alpha is harmless in most viewers but not spec-
+                // correct, and costs nothing extra to avoid here.
+                buffer.pixels[offset] = 0
+                buffer.pixels[offset + 1] = 0
+                buffer.pixels[offset + 2] = 0
+                buffer.pixels[offset + 3] = 0
+            }
+            offset += 4
+        }
+        return makeImage(buffer)
+    }
+
+    /// Recolors every pixel `mask` flags as a right/bottom edge to black,
+    /// in place — the native-sprite-scale equivalent of `withOutline`
+    /// below, which instead draws a separate line at block boundaries in
+    /// an already-enlarged canvas; at 1-pixel-per-block scale there's no
+    /// such boundary to draw a line along; see `Options.spriteSize`.
+    private static func paintEdgePixelsBlack(_ buffer: inout RGBABuffer, mask: EdgeMask) {
+        for y in 0..<mask.height {
+            for x in 0..<mask.width {
+                let index = y * mask.width + x
+                guard mask.rightEdges[index] || mask.bottomEdges[index] else { continue }
+                let offset = y * buffer.bytesPerRow + x * 4
+                buffer.pixels[offset] = 0
+                buffer.pixels[offset + 1] = 0
+                buffer.pixels[offset + 2] = 0
+            }
+        }
     }
 
     /// 4x4 ordered (Bayer) dither matrix, values 0...15 — the standard

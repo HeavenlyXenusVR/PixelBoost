@@ -1,3 +1,5 @@
+import CoreImage
+import CoreImage.CIFilterBuiltins
 import UIKit
 
 /// Runs one upscale via `upscaler`, builds the matching `UpscaleLogEntry`,
@@ -33,6 +35,14 @@ enum UpscaleRunner {
     ///   image rather than failing the whole upscale over an enhancement
     ///   step, same reasoning as `ActionLoggingService` never blocking the
     ///   action it's describing.
+    /// - Parameter blendAmount: 0...1, 1.0 (default, unchanged) is the
+    ///   model's raw output. Below that, the model still runs (so timing/
+    ///   history still reflect the real model), but its result is
+    ///   cross-dissolved with a plain Lanczos resize of `sourceImage` at
+    ///   the same final size — a way to dial back an over-aggressive or
+    ///   artifact-prone model's effect without switching models entirely.
+    ///   Applied before `sharpenAmount` so a low blend still gets sharpened
+    ///   if requested, rather than sharpen running on the pre-blend result.
     static func run(
         _ sourceImage: UIImage,
         using upscaler: ImageUpscaling,
@@ -40,6 +50,7 @@ enum UpscaleRunner {
         denoiseAmount: Double = 0,
         sharpenAmount: Double = 0,
         autoRenderDenoise: Bool = false,
+        blendAmount: Double = 1.0,
         progress: @escaping (Double) -> Void
     ) async -> Outcome {
         let startedAt = Date()
@@ -49,6 +60,9 @@ enum UpscaleRunner {
         }
         do {
             var result = try await upscaler.upscale(upscalerInput, progress: progress)
+            if blendAmount < 1.0 {
+                result = await blended(result, sourceImage: sourceImage, upscaler: upscaler, amount: blendAmount) ?? result
+            }
             if sharpenAmount > 0 {
                 result = UpscaleResult(image: PostSharpen.apply(result.image, amount: sharpenAmount), tileCount: result.tileCount)
             }
@@ -68,6 +82,50 @@ enum UpscaleRunner {
             )
             return Outcome(result: nil, error: error)
         }
+    }
+
+    /// Cross-dissolves `result.image` with a plain Lanczos resize of
+    /// `sourceImage` at the same final scale (read off `upscaler`'s own
+    /// `techniqueInfo`, so this matches whatever scale was actually
+    /// requested) — `amount` 0 is entirely the plain resize, 1 entirely
+    /// the model result. `nil` on any failure (falls back to the
+    /// unblended model result, same "best-effort enhancement pass"
+    /// reasoning as `autoRenderDenoise` above).
+    private static func blended(_ result: UpscaleResult, sourceImage: UIImage, upscaler: ImageUpscaling, amount: Double) async -> UpscaleResult? {
+        let scale = Double(upscaler.techniqueInfo.scaleFactor)
+        guard scale > 0,
+              let fallback = try? await LanczosUpscaler(scaleFactor: scale).upscale(sourceImage, progress: { _ in }),
+              let blendedImage = crossDissolve(result.image, fallback.image, amount: amount)
+        else { return nil }
+        return UpscaleResult(image: blendedImage, tileCount: result.tileCount)
+    }
+
+    private static let blendContext = CIContext()
+
+    private static func crossDissolve(_ modelOutput: UIImage, _ fallback: UIImage, amount: Double) -> UIImage? {
+        guard let modelCGImage = modelOutput.cgImage, let fallbackCGImage = fallback.cgImage else { return nil }
+        let modelImage = CIImage(cgImage: modelCGImage)
+        var fallbackImage = CIImage(cgImage: fallbackCGImage)
+        // Both should already be the same size (same source, same scale
+        // factor), but the two upscalers round tile/tap boundaries
+        // slightly differently — resize defensively so CIDissolveTransition
+        // (which otherwise clips to the intersection of its two inputs)
+        // never produces a visibly cropped edge on an off-by-a-few-pixels
+        // mismatch.
+        if fallbackImage.extent.size != modelImage.extent.size, fallbackImage.extent.width > 0, fallbackImage.extent.height > 0 {
+            let scaleX = modelImage.extent.width / fallbackImage.extent.width
+            let scaleY = modelImage.extent.height / fallbackImage.extent.height
+            fallbackImage = fallbackImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        }
+
+        let filter = CIFilter.dissolveTransition()
+        filter.inputImage = fallbackImage
+        filter.targetImage = modelImage
+        filter.time = Float(min(1, max(0, amount)))
+        guard let output = filter.outputImage,
+              let rendered = blendContext.createCGImage(output, from: modelImage.extent)
+        else { return nil }
+        return UIImage(cgImage: rendered, scale: 1, orientation: .up)
     }
 
     private static func log(

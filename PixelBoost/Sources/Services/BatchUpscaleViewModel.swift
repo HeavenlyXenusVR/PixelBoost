@@ -144,7 +144,8 @@ final class BatchUpscaleViewModel: ObservableObject {
                 normalized, using: upscaler, sourceFileSizeBytes: fileSizeBytes,
                 denoiseAmount: provider.denoiseBeforeUpscale ? 0.5 : 0,
                 sharpenAmount: provider.sharpenAmount,
-                autoRenderDenoise: autoRenderDenoise
+                autoRenderDenoise: autoRenderDenoise,
+                blendAmount: provider.upscaleStrength
             ) { _ in }
             guard let result = outcome.result else {
                 items[index].status = .failed(outcome.error?.localizedDescription ?? "Upscale failed.")

@@ -22,6 +22,12 @@ struct SettingsView: View {
                     modelRow
                     PBRowDivider()
                     scaleRow
+                    if provider.quality == .custom {
+                        PBRowDivider()
+                        customOverlapRow
+                    }
+                    PBRowDivider()
+                    upscaleStrengthRow
                     PBRowDivider()
                     denoiseRow
                     PBRowDivider()
@@ -38,7 +44,7 @@ struct SettingsView: View {
                         loadingRow(text: "Loading model…")
                     }
                 }
-                PBFootnote(text: "Auto runs every bundled model on the whole photo and shows you all of them side by side to pick from — Batch Upscale (nobody's watching per photo there) still picks automatically via a quick sharpness test instead. Fast skips the model entirely (plain resampling, instant). Standard/Best trade speed for tile-seam quality. Output Scale always analyzes at each model's native 4x, then resizes down to your chosen size — 2x/3x still benefit from the model's full detail, not a shortcut.")
+                PBFootnote(text: "Auto runs every bundled model on the whole photo and shows you all of them side by side to pick from — Batch Upscale (nobody's watching per photo there) still picks automatically via a quick sharpness test instead. Fast skips the model entirely (plain resampling, instant). Standard/Best trade speed for tile-seam quality; Custom hands you that same tile-overlap dial directly instead of a fixed preset. Output Scale always analyzes at each model's native 4x, then resizes down to your chosen size — 2x/3x still benefit from the model's full detail, not a shortcut. Upscale Strength blends the model's result with a plain resize — turn it down to dial back an over-aggressive or artifact-prone result without switching models.")
 
                 CustomPresetsCard()
                 ICloudPresetsCard()
@@ -270,6 +276,45 @@ struct SettingsView: View {
             PBCardRow(icon: "arrow.up.left.and.arrow.down.right", label: "Output Scale", value: "\(provider.scaleFactor.displayName) ›")
         }
         .buttonStyle(.plain)
+    }
+
+    private var customOverlapRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Tile Overlap")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(PBColor.ink)
+                Spacer()
+                Text("\(provider.customOverlap)px")
+                    .font(.system(size: 13))
+                    .foregroundStyle(PBColor.inkDim)
+            }
+            Slider(value: Binding(
+                get: { Double(provider.customOverlap) },
+                set: { provider.customOverlap = Int($0.rounded()) }
+            ), in: 1...32, step: 1)
+                .tint(PBColor.accent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var upscaleStrengthRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Upscale Strength")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(PBColor.ink)
+                Spacer()
+                Text("\(Int(provider.upscaleStrength * 100))%")
+                    .font(.system(size: 13))
+                    .foregroundStyle(PBColor.inkDim)
+            }
+            Slider(value: $provider.upscaleStrength, in: 0...1)
+                .tint(PBColor.accent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     private var denoiseRow: some View {

@@ -12,8 +12,12 @@ struct PixelArtView: View {
     @State private var colorLevels: Double = 6
     @State private var colorDepth: PixelArtService.ColorDepth = .bit32
     @State private var palette: PixelArtService.RetroPalette = .none
+    @State private var autoPaletteColorCount: Double = 8
     @State private var saturation: Double = 1.0
     @State private var outline = false
+    @State private var transparentBackground = false
+    @State private var spriteExportEnabled = false
+    @State private var spriteSize: Double = 32
     @State private var showGrid = false
     @State private var previewImage: UIImage?
     @State private var previewSource: UIImage?
@@ -57,6 +61,10 @@ struct PixelArtView: View {
                                     .tint(PBColor.accent)
                                 }
 
+                                if palette == .auto {
+                                    labeledSlider("Auto Palette Colors", value: $autoPaletteColorCount, range: 2...32, format: "%.0f")
+                                }
+
                                 if palette == .none {
                                     Toggle(isOn: $posterize) {
                                         Text("Limit Color Palette")
@@ -93,12 +101,48 @@ struct PixelArtView: View {
                                 }
                                 .tint(PBColor.accent)
 
-                                Toggle(isOn: $showGrid) {
-                                    Text("Show Grid Lines")
+                                Toggle(isOn: $transparentBackground) {
+                                    Text("Transparent Background")
                                         .font(.system(size: 13, weight: .semibold))
                                         .foregroundStyle(PBColor.ink)
                                 }
                                 .tint(PBColor.accent)
+
+                                if !spriteExportEnabled {
+                                    Toggle(isOn: $showGrid) {
+                                        Text("Show Grid Lines")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(PBColor.ink)
+                                    }
+                                    .tint(PBColor.accent)
+                                }
+
+                                PBRowDivider()
+
+                                Toggle(isOn: $spriteExportEnabled) {
+                                    Text("Export as Sprite")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(PBColor.ink)
+                                }
+                                .tint(PBColor.accent)
+
+                                if spriteExportEnabled {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("Sprite Size")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(PBColor.ink)
+                                        Picker("Sprite Size", selection: $spriteSize) {
+                                            Text("16px").tag(16.0)
+                                            Text("32px").tag(32.0)
+                                            Text("64px").tag(64.0)
+                                            Text("128px").tag(128.0)
+                                        }
+                                        .pickerStyle(.segmented)
+                                    }
+                                    Text("Outputs the actual pixelated grid at this size — a game-ready sprite file, rather than a full-resolution photo with blocky squares. Block Size and Show Grid don't apply here.")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(PBColor.inkDim)
+                                }
                             }
 
                             Button {
@@ -126,8 +170,12 @@ struct PixelArtView: View {
             .onChange(of: colorLevels) { _, _ in updatePreview() }
             .onChange(of: colorDepth) { _, _ in updatePreview() }
             .onChange(of: palette) { _, _ in updatePreview() }
+            .onChange(of: autoPaletteColorCount) { _, _ in updatePreview() }
             .onChange(of: saturation) { _, _ in updatePreview() }
             .onChange(of: outline) { _, _ in updatePreview() }
+            .onChange(of: transparentBackground) { _, _ in updatePreview() }
+            .onChange(of: spriteExportEnabled) { _, _ in updatePreview() }
+            .onChange(of: spriteSize) { _, _ in updatePreview() }
             .onChange(of: showGrid) { _, _ in updatePreview() }
             .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
             .onAppear { refreshFromCurrentImage() }
@@ -168,6 +216,9 @@ struct PixelArtView: View {
             colorLevels: posterize ? Int(colorLevels) : nil,
             colorDepth: colorDepth,
             palette: palette,
+            autoPaletteColorCount: Int(autoPaletteColorCount),
+            transparentBackground: transparentBackground,
+            spriteSize: spriteExportEnabled ? Int(spriteSize) : nil,
             saturation: saturation,
             outline: outline,
             showGrid: showGrid

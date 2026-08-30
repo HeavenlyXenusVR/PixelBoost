@@ -139,7 +139,8 @@ final class UpscalerViewModel: ObservableObject {
             let outcome = await UpscaleRunner.run(
                 sourceImage, using: upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
                 denoiseAmount: provider.denoiseBeforeUpscale ? 0.5 : 0,
-                sharpenAmount: provider.sharpenAmount
+                sharpenAmount: provider.sharpenAmount,
+                blendAmount: provider.upscaleStrength
             ) { [weak self] value in
                 Task { @MainActor in self?.progress = value }
             }
@@ -178,7 +179,7 @@ final class UpscalerViewModel: ObservableObject {
     /// so every attempt (whichever ends up chosen or not) still shows up
     /// in History the same way.
     func compareModels() {
-        guard let sourceImage, !isComparing, provider.quality.overlap != nil else { return }
+        guard let sourceImage, !isComparing, provider.quality.overlap(customOverlap: provider.customOverlap) != nil else { return }
         isComparing = true
         comparisonProgress = 0
         comparisonResults = []
