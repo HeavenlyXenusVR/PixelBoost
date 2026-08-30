@@ -11,6 +11,9 @@ struct PixelArtView: View {
     @State private var posterize = true
     @State private var colorLevels: Double = 6
     @State private var colorDepth: PixelArtService.ColorDepth = .bit32
+    @State private var palette: PixelArtService.RetroPalette = .none
+    @State private var saturation: Double = 1.0
+    @State private var outline = false
     @State private var showGrid = false
     @State private var previewImage: UIImage?
     @State private var previewSource: UIImage?
@@ -39,28 +42,56 @@ struct PixelArtView: View {
 
                                 labeledSlider("Block Size", value: $blockSize, range: 3...32, format: "%.0fpx")
 
-                                Toggle(isOn: $posterize) {
-                                    Text("Limit Color Palette")
+                                labeledSlider("Saturation", value: $saturation, range: 0.3...2.0, format: "%.1fx")
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Retro Palette")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(PBColor.ink)
+                                    Picker("Retro Palette", selection: $palette) {
+                                        ForEach(PixelArtService.RetroPalette.allCases) { option in
+                                            Text(option.rawValue).tag(option)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .tint(PBColor.accent)
+                                }
+
+                                if palette == .none {
+                                    Toggle(isOn: $posterize) {
+                                        Text("Limit Color Palette")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(PBColor.ink)
+                                    }
+                                    .tint(PBColor.accent)
+
+                                    if posterize {
+                                        labeledSlider("Palette Levels", value: $colorLevels, range: 2...16, format: "%.0f")
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("Color Depth")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(PBColor.ink)
+                                        Picker("Color Depth", selection: $colorDepth) {
+                                            ForEach(PixelArtService.ColorDepth.allCases) { depth in
+                                                Text(depth.rawValue).tag(depth)
+                                            }
+                                        }
+                                        .pickerStyle(.segmented)
+                                    }
+                                } else {
+                                    Text("A named palette replaces Limit Color Palette and Color Depth above with its own fixed set of colors.")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(PBColor.inkDim)
+                                }
+
+                                Toggle(isOn: $outline) {
+                                    Text("Sprite Outline")
                                         .font(.system(size: 13, weight: .semibold))
                                         .foregroundStyle(PBColor.ink)
                                 }
                                 .tint(PBColor.accent)
-
-                                if posterize {
-                                    labeledSlider("Palette Levels", value: $colorLevels, range: 2...16, format: "%.0f")
-                                }
-
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Color Depth")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(PBColor.ink)
-                                    Picker("Color Depth", selection: $colorDepth) {
-                                        ForEach(PixelArtService.ColorDepth.allCases) { depth in
-                                            Text(depth.rawValue).tag(depth)
-                                        }
-                                    }
-                                    .pickerStyle(.segmented)
-                                }
 
                                 Toggle(isOn: $showGrid) {
                                     Text("Show Grid Lines")
@@ -94,6 +125,9 @@ struct PixelArtView: View {
             .onChange(of: posterize) { _, _ in updatePreview() }
             .onChange(of: colorLevels) { _, _ in updatePreview() }
             .onChange(of: colorDepth) { _, _ in updatePreview() }
+            .onChange(of: palette) { _, _ in updatePreview() }
+            .onChange(of: saturation) { _, _ in updatePreview() }
+            .onChange(of: outline) { _, _ in updatePreview() }
             .onChange(of: showGrid) { _, _ in updatePreview() }
             .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
             .onAppear { refreshFromCurrentImage() }
@@ -133,6 +167,9 @@ struct PixelArtView: View {
             blockSize: Int(blockSize),
             colorLevels: posterize ? Int(colorLevels) : nil,
             colorDepth: colorDepth,
+            palette: palette,
+            saturation: saturation,
+            outline: outline,
             showGrid: showGrid
         )
     }

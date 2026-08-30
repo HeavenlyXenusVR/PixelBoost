@@ -114,15 +114,26 @@ up 3D-render noise — see "Render Denoise" below and
     a small grid (block size 3-32px), optionally crush the palette down to
     2-16 posterized color steps per channel (`CIColorPosterize`), then
     scale back up with nearest-neighbor interpolation so every block reads
-    as one hard-edged square instead of a blurry resize. A **Color Depth**
-    toggle picks 16-bit (RGB565 — 5 bits red, 6 green, 5 blue, the same
-    layout 16-bit-era console/handheld hardware rendered with, plus a 4x4
-    ordered/Bayer dither pattern — flat rounding alone at 32-64 levels per
-    channel turns out to barely band on an ordinary photo; the dither
-    texture is what actually reads as reduced color depth) or 32-bit (full
-    8-bit-per-channel truecolor, the default — a no-op quantization pass),
-    applied after posterizing and independent of the palette-levels slider
-    above. An optional faint
+    as one hard-edged square instead of a blurry resize. A **Saturation**
+    slider (0.3-2.0x, applied before every color step below so they
+    quantize the boosted colors) punches up color intensity first, since
+    real pixel-art palettes typically read more vivid than an ordinary
+    photo. A **Color Depth** toggle picks 16-bit (RGB565 — 5 bits red, 6
+    green, 5 blue, the same layout 16-bit-era console/handheld hardware
+    rendered with, plus a 4x4 ordered/Bayer dither pattern — flat rounding
+    alone at 32-64 levels per channel turns out to barely band on an
+    ordinary photo; the dither texture is what actually reads as reduced
+    color depth) or 32-bit (full 8-bit-per-channel truecolor, the default —
+    a no-op quantization pass), applied after posterizing and independent
+    of the palette-levels slider above. A **Retro Palette** picker (Game
+    Boy's 4-shade green LCD, PICO-8's 16 colors, an NES-ish dozen, CGA's
+    black/cyan/magenta/white, or an 8-step Grayscale) snaps every pixel to
+    the nearest color in that fixed, named set instead — a stronger,
+    more authentic result than posterize/Color Depth's independent
+    per-channel crush, since it takes over from both when picked. A
+    **Sprite Outline** toggle traces a thin black border along every block
+    boundary whose neighboring colors differ enough, the hard-edged look
+    classic pixel-art sprites use to separate shapes. An optional faint
     grid overlay makes the block boundaries explicit.
   - **Scripted Filter** — write or paste a small Lua script defining
     `apply(r, g, b, a)` (each 0...1 in, 4 numbers 0...1 out) and run it
