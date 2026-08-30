@@ -22,6 +22,17 @@ struct PixelArtView: View {
     @State private var previewImage: UIImage?
     @State private var previewSource: UIImage?
     @State private var lastBase: UIImage?
+    /// Real subject cutout (Vision's `VNGenerateForegroundInstanceMaskRequest`,
+    /// same tech as the Cutout tab) for the live preview — computed once per
+    /// `previewSource`, not on every slider tweak, since it's an actual
+    /// segmentation pass, not a cheap per-pixel filter. `nil` while pending
+    /// or if Vision found no distinct subject, in which case `updatePreview()`
+    /// falls back to `PixelArtService`'s corner-color chroma-key so
+    /// Transparent Background still does *something* rather than nothing.
+    @State private var subjectCutout: UIImage?
+    @State private var subjectCutoutBase: UIImage?
+    @State private var isDetectingSubject = false
+    @State private var isApplying = false
 
     var body: some View {
         NavigationStack {
@@ -108,6 +119,21 @@ struct PixelArtView: View {
                                 }
                                 .tint(PBColor.accent)
 
+                                if transparentBackground {
+                                    if isDetectingSubject {
+                                        HStack(spacing: 6) {
+                                            ProgressView().controlSize(.small)
+                                            Text("Detecting subject…")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundStyle(PBColor.inkDim)
+                                        }
+                                    } else if subjectCutout == nil {
+                                        Text("No distinct subject found — falling back to keying out the most common corner color instead.")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(PBColor.inkDim)
+                                    }
+                                }
+
                                 if !spriteExportEnabled {
                                     Toggle(isOn: $showGrid) {
                                         Text("Show Grid Lines")
@@ -147,11 +173,16 @@ struct PixelArtView: View {
 
                             Button {
                                 Haptics.lightImpact()
-                                apply()
+                                Task { await apply() }
                             } label: {
-                                Label("Apply", systemImage: "checkmark")
+                                if isApplying {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Label("Apply", systemImage: "checkmark")
+                                }
                             }
                             .buttonStyle(.pbGradient)
+                            .disabled(isApplying)
                         }
                         .padding(20)
                     }
@@ -173,7 +204,10 @@ struct PixelArtView: View {
             .onChange(of: autoPaletteColorCount) { _, _ in updatePreview() }
             .onChange(of: saturation) { _, _ in updatePreview() }
             .onChange(of: outline) { _, _ in updatePreview() }
-            .onChange(of: transparentBackground) { _, _ in updatePreview() }
+            .onChange(of: transparentBackground) { _, _ in
+                detectSubjectIfNeeded()
+                updatePreview()
+            }
             .onChange(of: spriteExportEnabled) { _, _ in updatePreview() }
             .onChange(of: spriteSize) { _, _ in updatePreview() }
             .onChange(of: showGrid) { _, _ in updatePreview() }
@@ -188,36 +222,84 @@ struct PixelArtView: View {
             lastBase = nil
             previewSource = nil
             previewImage = nil
+            subjectCutout = nil
+            subjectCutoutBase = nil
             return
         }
         guard current !== lastBase else { return }
         lastBase = current
         previewSource = Self.downscaled(current, maxDimension: 800)
+        detectSubjectIfNeeded()
         updatePreview()
+    }
+
+    /// Runs Vision's real subject segmentation (`BackgroundRemovalService`,
+    /// the same one the Cutout tab uses) once per `previewSource`, rather
+    /// than on every slider tweak — a full detection pass is real work, not
+    /// a cheap per-pixel filter like everything else this tab previews live.
+    private func detectSubjectIfNeeded() {
+        guard transparentBackground, let previewSource, previewSource !== subjectCutoutBase else { return }
+        subjectCutoutBase = previewSource
+        subjectCutout = nil
+        isDetectingSubject = true
+        Task {
+            let cutout = try? await BackgroundRemovalService.removeBackground(from: previewSource)
+            guard previewSource === subjectCutoutBase else { return } // superseded by a newer photo/refresh
+            subjectCutout = cutout
+            isDetectingSubject = false
+            updatePreview()
+        }
     }
 
     private func updatePreview() {
         guard let previewSource else { return }
-        previewImage = PixelArtService.apply(to: previewSource, options: currentOptions)
+        let base = (transparentBackground ? subjectCutout : nil) ?? previewSource
+        previewImage = PixelArtService.apply(to: base, options: options(usingChromaKeyFallback: transparentBackground && subjectCutout == nil))
     }
 
     /// Renders at full resolution and writes back to the shared result —
     /// which will itself bump `imageVersion` and trigger
-    /// `refreshFromCurrentImage()`.
-    private func apply() {
-        guard let current = viewModel.resultImage ?? viewModel.sourceImage else { return }
-        guard let result = PixelArtService.apply(to: current, options: currentOptions) else { return }
+    /// `refreshFromCurrentImage()`. Runs its own full-resolution subject
+    /// detection when Transparent Background is on, rather than reusing
+    /// the (downscaled) preview's cutout — Apply should use the sharpest
+    /// mask available, not whatever the live preview settled for at
+    /// preview scale.
+    private func apply() async {
+        guard let current = viewModel.resultImage ?? viewModel.sourceImage, !isApplying else { return }
+        isApplying = true
+        defer { isApplying = false }
+
+        var base = current
+        var useChromaKeyFallback = false
+        if transparentBackground {
+            if let cutout = try? await BackgroundRemovalService.removeBackground(from: current) {
+                base = cutout
+            } else {
+                useChromaKeyFallback = true
+            }
+        }
+
+        guard let result = PixelArtService.apply(to: base, options: options(usingChromaKeyFallback: useChromaKeyFallback)) else { return }
         viewModel.resultImage = result
     }
 
-    private var currentOptions: PixelArtService.Options {
+    /// `usingChromaKeyFallback` is true only when Transparent Background is
+    /// on but Vision found no subject to cut around — `PixelArtService`'s
+    /// own corner-color chroma-key then stands in, rather than Transparent
+    /// Background silently doing nothing. When a real Vision cutout is
+    /// already feeding `apply(to:options:)` its base image, this stays
+    /// false: re-running the chroma-key against an image that's already
+    /// been correctly keyed out would treat any dark/near-transparent-black
+    /// pixels *inside* the subject (dark hair, a black jacket) as more
+    /// "background" to remove.
+    private func options(usingChromaKeyFallback: Bool) -> PixelArtService.Options {
         PixelArtService.Options(
             blockSize: Int(blockSize),
             colorLevels: posterize ? Int(colorLevels) : nil,
             colorDepth: colorDepth,
             palette: palette,
             autoPaletteColorCount: Int(autoPaletteColorCount),
-            transparentBackground: transparentBackground,
+            transparentBackground: usingChromaKeyFallback,
             spriteSize: spriteExportEnabled ? Int(spriteSize) : nil,
             saturation: saturation,
             outline: outline,

@@ -115,11 +115,16 @@ enum PixelArtService {
         /// Only consulted when `palette == .auto` — how many colors
         /// `kMeansPalette` should extract from the photo's own colors.
         var autoPaletteColorCount: Int = 8
-        /// Treats whichever color is most common across the four corners
-        /// of the pixelated result as "background" and makes every
-        /// matching pixel transparent — a quick chroma-key for turning a
-        /// plain-background photo into a game-ready sprite, without a
-        /// proper subject cutout (see the Cutout tool for that).
+        /// A plain chroma-key fallback: treats whichever color is most
+        /// common across the four corners of the pixelated result as
+        /// "background" and makes every matching pixel transparent. Real
+        /// subject-aware background removal (Vision's
+        /// `VNGenerateForegroundInstanceMaskRequest`, same as the Cutout
+        /// tool) happens *before* this at the call site — `PixelArtView`
+        /// only sets this when Vision found no distinct subject to cut
+        /// around, so Transparent Background still does something rather
+        /// than nothing on a photo Vision can't segment (e.g. a flat
+        /// texture with no foreground object).
         var transparentBackground: Bool = false
         /// When set, output is the small pixelated grid itself, sized so
         /// its longer side is exactly this many actual pixels — a real
@@ -281,6 +286,17 @@ enum PixelArtService {
             bytesPerRow: bytesPerRow, space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
+        // A manually-created CGContext defaults to Quartz's native
+        // bottom-left-origin/y-up space, unlike UIGraphicsImageRenderer
+        // (used by draw()/withGrid()/withOutline() below), which is
+        // pre-flipped to match UIKit's top-left/y-down convention. Drawing
+        // straight into this context without correcting for that stores
+        // the image upside down relative to how its row-major bytes are
+        // read back out below (row 0 assumed to be the visual top) — flip
+        // the context first so the buffer this hands back actually reads
+        // top-to-bottom.
+        ctx.translateBy(x: 0, y: CGFloat(height))
+        ctx.scaleBy(x: 1, y: -1)
         ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         return RGBABuffer(pixels: pixels, width: width, height: height, bytesPerRow: bytesPerRow)
     }

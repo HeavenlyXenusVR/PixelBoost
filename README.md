@@ -135,11 +135,16 @@ up 3D-render noise — see "Render Denoise" below and
     when picked. A **Sprite Outline** toggle traces a thin black border
     along every block boundary whose neighboring colors differ enough, the
     hard-edged look classic pixel-art sprites use to separate shapes. A
-    **Transparent Background** toggle chroma-keys out whichever color is
-    most common across the four corners of the result — a quick way to
-    turn a plain-backdrop photo into a game-ready sprite without a full
-    Cutout pass. **Export as Sprite** switches the output from a
-    full-resolution photo with blocky squares to the actual pixelated grid
+    **Transparent Background** toggle runs the same on-device subject
+    segmentation as the Cutout tab (Vision's
+    `VNGenerateForegroundInstanceMaskRequest`) to detect the actual subject
+    and clear everything else around it — a quick way to turn any photo
+    into a game-ready sprite without switching to a full Cutout pass
+    first. Falls back to chroma-keying out whichever color is most common
+    across the four corners (the old behavior) only if Vision can't find a
+    distinct subject to cut around. **Export as Sprite** switches the
+    output from a full-resolution photo with blocky squares to the actual
+    pixelated grid
     itself, sized so its longer side is exactly 16/32/64/128px — a real
     sprite-sheet-ready asset rather than a preview-scale "still photo
     resolution" result (Block Size and the grid overlay don't apply to
