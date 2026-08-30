@@ -153,8 +153,36 @@ enum PixelArtService {
 
     private static let context = CIContext()
 
+    /// `.up` is already the overwhelming common case (every other tool's
+    /// output, and most Photos-library assets on modern iOS) — cheap
+    /// no-op check first, real work (and a `nil` on failure, rather than
+    /// silently proceeding with unnormalized data) only for the rest.
+    private static func normalizedOrientation(_ image: UIImage) -> UIImage? {
+        guard image.imageOrientation != .up else { return image }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }
+    }
+
     static func apply(to image: UIImage, options: Options) -> UIImage? {
-        guard let cgImage = image.cgImage else { return nil }
+        // `cgImage.width/height` are the *raw* pixel buffer's dimensions —
+        // they ignore `image.imageOrientation` entirely, unlike
+        // `image.size`. For a non-`.up`-oriented UIImage (e.g. a 90°
+        // sensor-orientation photo, common straight out of Photos) that
+        // means width/height come out swapped relative to how the photo
+        // actually displays, which would throw off every aspect-ratio
+        // computation below (Export as Sprite's aspect-fit included).
+        // Redrawing through a UIImage-level `.draw(in:)` (already
+        // orientation-aware, see the fix note on `draw()` further down)
+        // bakes the correct orientation into a fresh `.up`-oriented image
+        // before any of this file's own math ever sees raw pixel counts.
+        guard let normalizedImage = normalizedOrientation(image),
+              let cgImage = normalizedImage.cgImage
+        else { return nil }
         let width = cgImage.width
         let height = cgImage.height
         let blockSize = max(1, options.blockSize)
