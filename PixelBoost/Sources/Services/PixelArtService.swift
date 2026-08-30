@@ -314,18 +314,17 @@ enum PixelArtService {
             bytesPerRow: bytesPerRow, space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
-        // A manually-created CGContext defaults to Quartz's native
-        // bottom-left-origin/y-up space, unlike UIGraphicsImageRenderer
-        // (used by draw()/withGrid()/withOutline() below), which is
-        // pre-flipped to match UIKit's top-left/y-down convention. Drawing
-        // straight into this context without correcting for that stores
-        // the image upside down relative to how its row-major bytes are
-        // read back out below (row 0 assumed to be the visual top) — flip
-        // the context first so the buffer this hands back actually reads
-        // top-to-bottom.
-        ctx.translateBy(x: 0, y: CGFloat(height))
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // Draw via UIImage, not CGContext.draw(cgImage:in:) — same
+        // reasoning as draw()/withGrid()/withOutline() below: the raw
+        // CGImage-level draw call doesn't correct for orientation/the
+        // context's coordinate convention the way UIImage.draw(in:) does,
+        // and a manually-created CGContext(data:) has no UIGraphicsImageRenderer
+        // managing that for us automatically — so push it as the current
+        // context ourselves first, draw through UIImage exactly like every
+        // other drawing call in this app, then pop it back off.
+        UIGraphicsPushContext(ctx)
+        UIImage(cgImage: cgImage).draw(in: CGRect(x: 0, y: 0, width: width, height: height))
+        UIGraphicsPopContext()
         return RGBABuffer(pixels: pixels, width: width, height: height, bytesPerRow: bytesPerRow)
     }
 
