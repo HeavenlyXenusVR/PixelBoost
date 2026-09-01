@@ -1,10 +1,14 @@
 import SwiftUI
 
-/// One-tap automatic exposure/color correction. Lives as its own
+/// One-tap automatic exposure/color correction, driven by real pixel
+/// statistics of this specific photo (see `ImageStatistics`,
+/// `AutoEnhanceService`) rather than a fixed preset. Lives as its own
 /// persistent tab (see `RootView`) like every other tool — analyze once,
 /// preview large, "Apply" bakes it onto the shared result. No sliders:
-/// the whole point is it's the one-tap fix competitors ship (Snapseed's
-/// "Tune Image" auto, Photoshop Express's "Auto Enhance").
+/// the whole point is it's a one-tap fix, the same idea as Snapseed's
+/// "Tune Image" auto or Photoshop Express's "Auto Enhance," just backed
+/// by this app's own measured-brightness/contrast/color-balance analysis
+/// instead of theirs.
 struct AutoEnhanceView: View {
     @EnvironmentObject private var viewModel: UpscalerViewModel
 
@@ -27,7 +31,7 @@ struct AutoEnhanceView: View {
                             }
 
                             Text(enhancedPreview == nil
-                                 ? "Automatically balances exposure, color, and contrast — the same auto-fix analysis Snapseed and Photoshop Express use."
+                                 ? "Measures this photo's own brightness, contrast range, and color balance pixel by pixel, then corrects exposure, contrast, and any color cast to match."
                                  : "Preview of the automatic fix.")
                                 .pbFont(.body)
                                 .foregroundStyle(PBColor.inkDim)

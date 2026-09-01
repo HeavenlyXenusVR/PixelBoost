@@ -158,20 +158,21 @@ struct FrameShapePath: Shape {
     }
 }
 
-/// Bakes a `FrameShape` onto a photo: center-crop to a square (the shapes
-/// above all assume one), then clip to the shape's path. Like every other
-/// renderer chaining onto the shared result (see `ImageTransform`),
-/// `format.opaque = false` is deliberate — everything outside the shape
-/// becomes transparent, not flattened to black, and a prior Cutout's own
+/// Bakes a `FrameShape` onto a photo: crop to a square — by default
+/// centered, or wherever `FramesView`'s pan/zoom gesture left it (see
+/// `cropRect`) — then clip to the shape's path. Like every other renderer
+/// chaining onto the shared result (see `ImageTransform`), `format.opaque
+/// = false` is deliberate — everything outside the shape becomes
+/// transparent, not flattened to black, and a prior Cutout's own
 /// transparency is preserved rather than composited onto anything.
 enum FrameShapeService {
-    static func apply(_ shape: FrameShape, to image: UIImage) -> UIImage {
-        let side = min(image.size.width, image.size.height)
-        let squareRect = CGRect(
-            x: (image.size.width - side) / 2, y: (image.size.height - side) / 2,
-            width: side, height: side
-        )
-        let squared = image.cropped(to: squareRect)
+    /// `cropRect` is in `image`'s own pixel space (top-left origin,
+    /// y-down, same convention as `UIImage.cropped(to:)`) and may extend
+    /// past `image`'s bounds — `cropped(to:)` already fills anything
+    /// outside with transparency, so an over-zoomed/panned crop just
+    /// shows a partial shape rather than crashing or clamping oddly.
+    static func apply(_ shape: FrameShape, to image: UIImage, cropRect: CGRect) -> UIImage {
+        let squared = image.cropped(to: cropRect)
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -183,5 +184,60 @@ enum FrameShapeService {
             context.cgContext.clip()
             squared.draw(at: .zero)
         }
+    }
+
+    /// The default, centered square crop — `FramesView`'s starting
+    /// position before any pan/zoom, and the fallback when the on-screen
+    /// stage hasn't been measured yet.
+    static func centeredCropRect(for imageSize: CGSize) -> CGRect {
+        let side = min(imageSize.width, imageSize.height)
+        return CGRect(x: (imageSize.width - side) / 2, y: (imageSize.height - side) / 2, width: side, height: side)
+    }
+
+    /// Converts `FramesView`'s on-screen pan/zoom state back into a pixel
+    /// crop rect in `imageSize`'s own space. Mirrors exactly what's on
+    /// screen: the preview shows `image` laid out with SwiftUI's own
+    /// `.scaledToFill()` (scale = `stageSize / min(imageSize)`, the same
+    /// formula it uses internally to fill a square frame) times the
+    /// user's `zoomScale`, then shifted by `panOffset` — this inverts that
+    /// same transform to find which square region of the source image is
+    /// actually visible inside the stage.
+    static func cropRect(imageSize: CGSize, stageSize: CGFloat, zoomScale: CGFloat, panOffset: CGSize) -> CGRect {
+        guard stageSize > 0, imageSize.width > 0, imageSize.height > 0 else {
+            return centeredCropRect(for: imageSize)
+        }
+        let baseScale = stageSize / min(imageSize.width, imageSize.height)
+        let totalScale = baseScale * zoomScale
+        let displayedSize = CGSize(width: imageSize.width * totalScale, height: imageSize.height * totalScale)
+
+        // Top-left of the displayed (scaled) image, in stage coordinates —
+        // centered, then shifted by the user's drag.
+        let originX = (stageSize - displayedSize.width) / 2 + panOffset.width
+        let originY = (stageSize - displayedSize.height) / 2 + panOffset.height
+
+        // The stage square's own top-left is (0, 0) — the portion of the
+        // displayed image it shows is the inverse of that origin, scaled
+        // back down into the source image's own pixel space.
+        return CGRect(
+            x: -originX / totalScale, y: -originY / totalScale,
+            width: stageSize / totalScale, height: stageSize / totalScale
+        )
+    }
+
+    /// Clamps a candidate pan offset so the stage square never shows a gap
+    /// past the (scaled) image's own edge — plain min/max, not fragile
+    /// gesture math, same "keep it simple" reasoning `CropRotateView`
+    /// gives for skipping free-angle straighten.
+    static func clampedPanOffset(_ candidate: CGSize, imageSize: CGSize, stageSize: CGFloat, zoomScale: CGFloat) -> CGSize {
+        guard stageSize > 0, imageSize.width > 0, imageSize.height > 0 else { return .zero }
+        let baseScale = stageSize / min(imageSize.width, imageSize.height)
+        let totalScale = baseScale * zoomScale
+        let displayedSize = CGSize(width: imageSize.width * totalScale, height: imageSize.height * totalScale)
+        let maxX = max(0, (displayedSize.width - stageSize) / 2)
+        let maxY = max(0, (displayedSize.height - stageSize) / 2)
+        return CGSize(
+            width: min(max(candidate.width, -maxX), maxX),
+            height: min(max(candidate.height, -maxY), maxY)
+        )
     }
 }

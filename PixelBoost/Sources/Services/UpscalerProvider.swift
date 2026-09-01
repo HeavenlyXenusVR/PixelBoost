@@ -440,7 +440,9 @@ final class UpscalerProvider: ObservableObject {
     }
 
     /// Runs every bundled real model over one shared crop of `sourceImage`
-    /// and keeps whichever produced the sharpest, most-detailed result —
+    /// and keeps whichever produced the sharpest, most-detailed result,
+    /// with a content-aware bonus (see `contentAffinityBonus`) from real
+    /// pixel statistics of the *source* crop itself layered on top —
     /// used only by `BatchUpscaleViewModel`, where nobody is present to
     /// pick per photo across a queue of up to 20. Returns `nil` (caller
     /// falls back to `.generalPhoto`) if there's no image to test against
@@ -456,16 +458,56 @@ final class UpscalerProvider: ObservableObject {
         isTestingModels = true
         defer { isTestingModels = false }
 
+        // Measured once, from the same test crop every candidate runs
+        // against — every bonus below is grounded in this one real read
+        // of the source's own pixels, not a per-candidate guess.
+        let contentStats = ImageStatistics.measure(testRegion)
+
         var best: (choice: UpscaleModelChoice, score: Double)?
         for candidate in candidates {
             guard let upscaler = await resolvedModel(for: candidate, overlap: overlap) else { continue }
             guard let result = try? await upscaler.upscale(testRegion, progress: { _ in }) else { continue }
-            let score = Self.sharpnessScore(result.image)
+            var score = Self.sharpnessScore(result.image)
+            if let contentStats {
+                score += Self.contentAffinityBonus(for: candidate, stats: contentStats)
+            }
             if best == nil || score > best!.score {
                 best = (candidate, score)
             }
         }
         return best?.choice
+    }
+
+    /// A heuristic nudge from the *source* crop's own measured pixel
+    /// statistics — on top of (never instead of) the empirical
+    /// output-sharpness trial above, which actually runs the real models
+    /// and measures their real results. This only breaks ties/close calls
+    /// toward the model family whose intended content actually matches
+    /// what's measured in the photo:
+    ///
+    /// - `.lowLight`: the source crop itself reads as genuinely dark.
+    /// - `.anime`/`.stylizedRender`: high edge density (hard line/edge
+    ///   structure) together with real color saturation (`channelSpread`)
+    ///   — the measurable signature of flat-color line art or toon
+    ///   shading, which a continuous-tone photo doesn't share.
+    /// - `.textDocument`: near-grayscale (`channelSpread` close to 0)
+    ///   with a very wide luminance range — a page of dark text on a
+    ///   light background.
+    /// - everything else: no bonus: `.portrait`/`.generalPhoto`/`.render3D`
+    ///   don't have a comparably distinct, reliably-measurable pixel
+    ///   signature to key off of, so they're left to the sharpness trial
+    ///   alone rather than a guess dressed up as a measurement.
+    private static func contentAffinityBonus(for choice: UpscaleModelChoice, stats: ImageStatistics) -> Double {
+        switch choice {
+        case .lowLight:
+            return stats.meanLuma < 0.35 ? 12 : 0
+        case .anime, .stylizedRender:
+            return (stats.edgeDensity > 20 && stats.channelSpread > 0.12) ? 10 : 0
+        case .textDocument:
+            return (stats.channelSpread < 0.05 && stats.maxLuma - stats.minLuma > 0.6) ? 15 : 0
+        case .portrait, .generalPhoto, .render3D, .auto:
+            return 0
+        }
     }
 
     /// A center crop, not a resize — auto-selection needs to see the model
