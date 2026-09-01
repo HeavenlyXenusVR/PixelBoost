@@ -80,7 +80,7 @@ struct ContentView: View {
                                 .multilineTextAlignment(.center)
                         }
 
-                        Text("Edit tools — Cutout, Enhance, Adjust, Selective, Crop, Filters, Pixel Art, Scripted Filter, Overlays, Erase, Restore, Clone Stamp — live in the bar below.")
+                        Text("Edit tools — Cutout, Enhance, Adjust, Selective, Crop, Frames, Filters, Pixel Art, Scripted Filter, Overlays, Erase, Restore, Clone Stamp — live in the bar below.")
                             .font(.system(size: 12))
                             .foregroundStyle(PBColor.inkFaint)
                             .multilineTextAlignment(.center)

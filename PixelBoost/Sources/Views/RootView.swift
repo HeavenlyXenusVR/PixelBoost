@@ -71,6 +71,7 @@ struct RootView: View {
         case .adjust: AdjustmentsView()
         case .selective: SelectiveAdjustView()
         case .crop: CropRotateView()
+        case .frames: FramesView()
         case .filters: FiltersView()
         case .pixelArt: PixelArtView()
         case .scripted: ScriptedFilterView()
@@ -177,7 +178,7 @@ private struct ToolsDrawerView: View {
     let selectedTab: AppTab
     let onSelect: (AppTab) -> Void
 
-    private static let editTools: [AppTab] = [.cutout, .enhance, .selective, .crop, .pixelArt, .scripted, .overlays, .erase, .restore, .renderDenoise, .normalMap, .seamlessTexture, .depthFog, .aoBlend, .lut, .clone]
+    private static let editTools: [AppTab] = [.cutout, .enhance, .selective, .crop, .frames, .pixelArt, .scripted, .overlays, .erase, .restore, .renderDenoise, .normalMap, .seamlessTexture, .depthFog, .aoBlend, .lut, .clone]
     private static let libraryTools: [AppTab] = [.cloud, .history]
 
     private let columns = [GridItem(.adaptive(minimum: 84), spacing: 14)]

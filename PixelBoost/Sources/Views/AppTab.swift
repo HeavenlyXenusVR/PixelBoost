@@ -6,7 +6,7 @@ import Foundation
 /// using `TabView`: 5 always-visible primary tabs (`primaryTabs`) plus a
 /// center "Tools" button opening a drawer sheet for the rest (`moreTabs`).
 enum AppTab: String, CaseIterable, Identifiable {
-    case home, cutout, enhance, adjust, selective, crop, filters, pixelArt, scripted, overlays, erase, restore, renderDenoise, normalMap, seamlessTexture, depthFog, aoBlend, lut, clone, batch, cloud, history, settings
+    case home, cutout, enhance, adjust, selective, crop, frames, filters, pixelArt, scripted, overlays, erase, restore, renderDenoise, normalMap, seamlessTexture, depthFog, aoBlend, lut, clone, batch, cloud, history, settings
 
     var id: String { rawValue }
 
@@ -30,6 +30,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .adjust: return "Adjust"
         case .selective: return "Selective"
         case .crop: return "Crop"
+        case .frames: return "Frames"
         case .filters: return "Filters"
         case .pixelArt: return "Pixel Art"
         case .scripted: return "Scripted"
@@ -58,6 +59,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .adjust: return "slider.horizontal.3"
         case .selective: return "paintbrush.pointed"
         case .crop: return "crop"
+        case .frames: return "square.on.circle"
         case .filters: return "camera.filters"
         case .pixelArt: return "square.grid.3x3.fill"
         // Documented as an SF Symbol since iOS 13, but like every other
