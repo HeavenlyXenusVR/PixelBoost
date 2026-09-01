@@ -1,4 +1,5 @@
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import UIKit
 import Vision
 
@@ -58,6 +59,7 @@ enum BackgroundRemovalService {
 
     private static func composite(maskImage: CIImage, over cgImage: CGImage) throws -> UIImage {
         let subjectImage = CIImage(cgImage: cgImage)
+        let refinedMask = refine(mask: maskImage, extent: subjectImage.extent)
 
         guard let blend = CIFilter(name: "CIBlendWithMask") else {
             throw BackgroundRemovalError.processingFailed
@@ -71,7 +73,7 @@ enum BackgroundRemovalService {
             CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0)).cropped(to: subjectImage.extent),
             forKey: kCIInputBackgroundImageKey
         )
-        blend.setValue(maskImage, forKey: kCIInputMaskImageKey)
+        blend.setValue(refinedMask, forKey: kCIInputMaskImageKey)
 
         guard let output = blend.outputImage else { throw BackgroundRemovalError.processingFailed }
 
@@ -82,6 +84,42 @@ enum BackgroundRemovalService {
             throw BackgroundRemovalError.processingFailed
         }
         return UIImage(cgImage: rendered, scale: 1, orientation: .up)
+    }
+
+    /// `CIBlendWithMask` uses `subjectImage`'s own RGB at every edge pixel,
+    /// mask alpha or not — and right at a subject's silhouette, that RGB is
+    /// naturally a blend of the subject and whatever was directly behind
+    /// it (the camera's own anti-aliasing/defocus at the boundary), not a
+    /// clean matte of the subject alone. Left as Vision hands it back,
+    /// those background-tinted boundary pixels ride straight through into
+    /// `resultImage`'s semi-transparent edge — invisible against the
+    /// original background, but a visible colored halo/fringe (and a
+    /// jagged, un-anti-aliased boundary from the raw mask) the moment it's
+    /// composited over anything else: a Background Replace fill, a dark
+    /// preview canvas, another photo pasted behind it.
+    ///
+    /// Eroding the mask by a couple pixels drops that contaminated
+    /// boundary ring entirely — trading a hair-thin sliver of the true
+    /// edge for it — then a matching blur feathers the now-clean edge back
+    /// into a smooth anti-aliased transition instead of Vision's blocky
+    /// boundary. Both radii are small and resolution-independent: the
+    /// contamination band's width comes from the original photo's own
+    /// optical blur circle at the subject edge, not from the image's pixel
+    /// count, so it doesn't need to scale with megapixels the way, say,
+    /// `RestoreService`'s proportional feather does for its face-region
+    /// mask.
+    private static func refine(mask: CIImage, extent: CGRect) -> CIImage {
+        let erode = CIFilter.morphologyMinimum()
+        erode.inputImage = mask.clampedToExtent()
+        erode.radius = 1.5
+        let eroded = erode.outputImage ?? mask
+
+        let blur = CIFilter.gaussianBlur()
+        blur.inputImage = eroded.clampedToExtent()
+        blur.radius = 1.5
+        let feathered = blur.outputImage ?? eroded
+
+        return feathered.cropped(to: extent)
     }
 
     // -------------------------------------------------------------------
