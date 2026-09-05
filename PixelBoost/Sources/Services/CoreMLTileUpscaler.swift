@@ -139,6 +139,13 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         }
         context.setAllowsAntialiasing(false)
         context.interpolationQuality = .none
+        // A raw CGContext is initialized with the Core Graphics default of
+        // origin-at-lower-left, while the tiler and image-crop math in this
+        // code base use ordinary UIKit/top-left y-down coordinates. Flip the
+        // canvas once before stitching so each tile lands in the correct place
+        // instead of appearing as a second, upside-down layer.
+        context.translateBy(x: 0, y: CGFloat(canvasHeight))
+        context.scaleBy(x: 1, y: -1)
 
         for (index, tile) in plan.tiles.enumerated() {
             try Task.checkCancellation()
