@@ -128,17 +128,37 @@ jobs:
           echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
           echo "ipa_path=build/$IPA_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           TAG="${{ steps.version.outputs.tag }}"
           IPA_NAME="${{ steps.ipa.outputs.ipa_name }}"
-          gh release create "$TAG" \
-            --title "PixelBoost v${VERSION}" \
-            --notes "$(printf '## PixelBoost v%s\n\nUnsigned IPA — install with [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/).\n\nBundles a converted Real-ESRGAN x4plus Core ML model (BSD-3-Clause) — see Models/README.md. Compiles clean in CI; actual on-device inference has not yet been verified — please test and report back.' "$VERSION")" \
-            "build/$IPA_NAME"
+
+          RELEASE_NOTES=$(cat <<EOF
+          ## PixelBoost v${VERSION}
+
+          Unsigned IPA — install with [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/).
+
+          Bundles a converted Real-ESRGAN x4plus Core ML model (BSD-3-Clause) — see Models/README.md. Compiles clean in CI; actual on-device inference has not yet been verified — please test and report back.
+          EOF
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; updating metadata and uploading the IPA."
+            gh release edit "$TAG" \
+              --title "PixelBoost v${VERSION}" \
+              --notes "$RELEASE_NOTES"
+            gh release upload "$TAG" "build/$IPA_NAME" --clobber
+          else
+            echo "Creating release $TAG for the first time."
+            gh release create "$TAG" \
+              --title "PixelBoost v${VERSION}" \
+              --notes "$RELEASE_NOTES" \
+              "build/$IPA_NAME"
+          fi
 
       # Best-effort: never fail the release over this housekeeping commit.
       - name: Commit stamped version back to main
