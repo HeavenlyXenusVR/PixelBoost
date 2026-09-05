@@ -81,33 +81,64 @@ final class CoreMLTileUpscaler: ImageUpscaling {
 
     func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UpscaleResult {
         guard let cgImage = image.cgImage else { throw UpscaleError.invalidImage }
-        let tiler = ImageTiler(tileSize: config.tileSize, overlap: config.overlap, scaleFactor: config.scaleFactor)
-        let plan = tiler.plan(imageWidth: cgImage.width, imageHeight: cgImage.height)
 
         // Normalize once so every tile crop is a plain 1-point-per-pixel,
         // upright image — see UIImage+Tile.swift for why this matters.
         let normalized = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
 
-        // Collected in memory and stitched via UIGraphicsImageRenderer once
-        // every tile is done, NOT drawn incrementally into one shared
-        // CGContext with a manual bottom-left-to-top-left coordinate flip
-        // (translateBy/scaleBy) — that manual-flip version shipped without
-        // ever running on real hardware and was the actual source of a
-        // reported export corruption bug (torn into repeating horizontal
-        // bands — every tile row landing at a subtly wrong Y). A real
-        // device A/B test proved the corruption was 100% deterministic and
-        // independent of compute backend (CPU-only vs GPU+ANE gave
-        // pixel-identical corrupted output), which rules out a hardware
-        // race and points squarely at this file's own compositing math.
-        // UIGraphicsImageRenderer/UIImage.draw(at:) handle the coordinate
-        // system entirely internally — no hand-rolled CTM flip to get
-        // subtly wrong — at the cost of holding every tile's cropped
-        // output in memory simultaneously until the final stitch (the
-        // original, deliberate memory/crash tradeoff this was rewritten
-        // away from; see README's "no disk-based caching of intermediate
-        // tiles" known simplification).
-        var results: [(destOrigin: CGPoint, croppedOutput: UIImage)] = []
-        results.reserveCapacity(plan.tiles.count)
+        // A 4x upscale of a 15k-wide ultrawide keyart can require hundreds of
+        // millions of pixels in the final output, which is enough to OOM on
+        // device before the pipeline even gets to save/export. Keep the final
+        // output under a conservative pixel budget and shrink before tiling so
+        // big/wide images still produce a result instead of crashing the app.
+        let maxSafeOutputPixels = 32_000_000.0
+        let sourcePixels = Double(normalized.size.width) * Double(normalized.size.height)
+        let finalPixels = sourcePixels * Double(config.scaleFactor * config.scaleFactor)
+        let workingImage: UIImage
+        if finalPixels > maxSafeOutputPixels {
+            let scale = sqrt(maxSafeOutputPixels / finalPixels)
+            let targetSize = CGSize(
+                width: (normalized.size.width * CGFloat(scale)).rounded(),
+                height: (normalized.size.height * CGFloat(scale)).rounded()
+            )
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+            workingImage = renderer.image { context in
+                context.cgContext.interpolationQuality = .high
+                normalized.draw(in: CGRect(origin: .zero, size: targetSize))
+            }
+        } else {
+            workingImage = normalized
+        }
+
+        guard let workingCGImage = workingImage.cgImage else { throw UpscaleError.invalidImage }
+        let tiler = ImageTiler(tileSize: config.tileSize, overlap: config.overlap, scaleFactor: config.scaleFactor)
+        let plan = tiler.plan(imageWidth: workingCGImage.width, imageHeight: workingCGImage.height)
+
+        // Keep a single canvas alive instead of storing every tile result in
+        // memory until the end. Large/wide source photos can produce dozens of
+        // tiles; holding all of them simultaneously is what makes this crash on
+        // big inputs. Drawing each tile directly into the final output keeps the
+        // working set bounded by the current tile plus the final canvas, rather
+        // than O(plan.tiles) full-frame images.
+        let canvasWidth = Int(max(1, plan.outputSize.width.rounded()))
+        let canvasHeight = Int(max(1, plan.outputSize.height.rounded()))
+        let bytesPerPixel = 4
+        guard let context = CGContext(
+            data: nil,
+            width: canvasWidth,
+            height: canvasHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: canvasWidth * bytesPerPixel,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw UpscaleError.renderFailed
+        }
+        context.setAllowsAntialiasing(false)
+        context.interpolationQuality = .none
 
         for (index, tile) in plan.tiles.enumerated() {
             try Task.checkCancellation()
@@ -116,7 +147,7 @@ final class CoreMLTileUpscaler: ImageUpscaling {
             // margin to be real (if flat) context, not a hard transparent
             // edge; see `croppedEdgeReplicated(to:)`'s doc comment for the
             // measured dark/smudged-fringe defect this fixes.
-            let inputTile = normalized.croppedEdgeReplicated(to: tile.sourceRect)
+            let inputTile = workingImage.croppedEdgeReplicated(to: tile.sourceRect)
             let outputTile = try await runModel(on: inputTile)
 
             let keepScaled = CGRect(
@@ -126,24 +157,17 @@ final class CoreMLTileUpscaler: ImageUpscaling {
                 height: tile.keepRect.height * CGFloat(config.scaleFactor)
             )
             let croppedOutput = outputTile.cropped(to: keepScaled)
-            results.append((tile.destOrigin, croppedOutput))
+
+            autoreleasepool {
+                UIGraphicsPushContext(context)
+                croppedOutput.draw(at: tile.destOrigin)
+                UIGraphicsPopContext()
+            }
             progress(Double(index + 1) / Double(plan.tiles.count))
         }
 
-        let stitched = Self.stitch(results, canvasSize: plan.outputSize)
-        return UpscaleResult(image: stitched, tileCount: plan.tiles.count)
-    }
-
-    private static func stitch(_ tiles: [(destOrigin: CGPoint, croppedOutput: UIImage)], canvasSize: CGSize) -> UIImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
-        return renderer.image { _ in
-            for (origin, image) in tiles {
-                image.draw(at: origin)
-            }
-        }
+        guard let stitchedCGImage = context.makeImage() else { throw UpscaleError.renderFailed }
+        return UpscaleResult(image: UIImage(cgImage: stitchedCGImage, scale: 1, orientation: .up), tileCount: plan.tiles.count)
     }
 
     private func runModel(on tile: UIImage) async throws -> UIImage {
