@@ -79,6 +79,27 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         config.overlap = overlap
     }
 
+    private static func adaptiveTileSettings(for size: CGSize, requestedOverlap: Int) -> (tileSize: Int, overlap: Int) {
+        let area = size.width * size.height
+        let tileSize: Int
+        let overlapLimit: Int
+
+        switch area {
+        case let value where value > 60_000_000:
+            tileSize = 64
+            overlapLimit = 4
+        case let value where value > 24_000_000:
+            tileSize = 96
+            overlapLimit = 6
+        default:
+            tileSize = 128
+            overlapLimit = 8
+        }
+
+        let overlap = min(max(4, requestedOverlap), max(4, overlapLimit))
+        return (tileSize: tileSize, overlap: overlap)
+    }
+
     func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UpscaleResult {
         guard let cgImage = image.cgImage else { throw UpscaleError.invalidImage }
 
@@ -91,7 +112,11 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         // device before the pipeline even gets to save/export. Keep the final
         // output under a conservative pixel budget and shrink before tiling so
         // big/wide images still produce a result instead of crashing the app.
-        let maxSafeOutputPixels = 32_000_000.0
+        // The threshold is intentionally conservative on iPhone-class devices,
+        // because the model work and the final compositing are both heavy and
+        // thermal load climbs quickly once the compute graph spills into the
+        // tens of millions of pixels.
+        let maxSafeOutputPixels = 16_000_000.0
         let sourcePixels = Double(normalized.size.width) * Double(normalized.size.height)
         let finalPixels = sourcePixels * Double(config.scaleFactor * config.scaleFactor)
         let workingImage: UIImage
@@ -114,7 +139,8 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         }
 
         guard let workingCGImage = workingImage.cgImage else { throw UpscaleError.invalidImage }
-        let tiler = ImageTiler(tileSize: config.tileSize, overlap: config.overlap, scaleFactor: config.scaleFactor)
+        let adaptive = Self.adaptiveTileSettings(for: workingImage.size, requestedOverlap: config.overlap)
+        let tiler = ImageTiler(tileSize: adaptive.tileSize, overlap: adaptive.overlap, scaleFactor: config.scaleFactor)
         let plan = tiler.plan(imageWidth: workingCGImage.width, imageHeight: workingCGImage.height)
 
         // Keep a single canvas alive instead of storing every tile result in

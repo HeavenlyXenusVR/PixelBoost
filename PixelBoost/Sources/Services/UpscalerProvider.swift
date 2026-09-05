@@ -346,7 +346,7 @@ final class UpscalerProvider: ObservableObject {
         quality = UserDefaults.standard.string(forKey: Self.qualityDefaultsKey)
             .flatMap(UpscaleQuality.init(rawValue:)) ?? .standard
         let storedCustomOverlap = UserDefaults.standard.object(forKey: Self.customOverlapDefaultsKey) as? Int
-        customOverlap = storedCustomOverlap ?? 12
+        customOverlap = storedCustomOverlap ?? 8
         let storedUpscaleStrength = UserDefaults.standard.object(forKey: Self.upscaleStrengthDefaultsKey) as? Double
         upscaleStrength = storedUpscaleStrength ?? 1.0
         let storedScale = UserDefaults.standard.object(forKey: Self.scaleFactorDefaultsKey) as? Int
@@ -458,7 +458,15 @@ final class UpscalerProvider: ObservableObject {
     /// falls back to `.generalPhoto`) if there's no image to test against
     /// or fewer than two real candidates to choose between.
     private func autoSelectModel(for sourceImage: UIImage?, overlap: Int) async -> UpscaleModelChoice? {
-        let candidates = UpscaleModelChoice.allCases.filter { $0 != .auto && $0.isBundled }
+        let baseCandidates = UpscaleModelChoice.allCases.filter { $0 != .auto && $0.isBundled }
+        let candidates: [UpscaleModelChoice]
+        if let sourceImage,
+           sourceImage.size.width * sourceImage.size.height > 24_000_000 {
+            candidates = baseCandidates.filter { $0 == .generalPhoto || $0 == .lowLight || $0 == .portrait }
+        } else {
+            candidates = baseCandidates
+        }
+
         guard candidates.count > 1,
               let sourceImage,
               let testRegion = Self.centerTestRegion(of: sourceImage, maxSize: Self.autoTestRegionSize) else {
