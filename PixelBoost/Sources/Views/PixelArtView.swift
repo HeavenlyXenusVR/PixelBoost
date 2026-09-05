@@ -14,6 +14,7 @@ struct PixelArtView: View {
     @State private var palette: PixelArtService.RetroPalette = .none
     @State private var autoPaletteColorCount: Double = 8
     @State private var saturation: Double = 1.0
+    @State private var style: PixelArtService.Style = .balanced
     @State private var outline = false
     @State private var transparentBackground = false
     @State private var spriteExportEnabled = false
@@ -103,6 +104,18 @@ struct PixelArtView: View {
                                     Text("A named palette replaces Limit Color Palette and Color Depth above with its own fixed set of colors.")
                                         .font(.system(size: 12, weight: .medium))
                                         .foregroundStyle(PBColor.inkDim)
+                                }
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Style")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(PBColor.ink)
+                                    Picker("Style", selection: $style) {
+                                        ForEach(PixelArtService.Style.allCases) { option in
+                                            Text(option.rawValue).tag(option)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
                                 }
 
                                 Toggle(isOn: $outline) {
@@ -203,6 +216,7 @@ struct PixelArtView: View {
             .onChange(of: palette) { _, _ in updatePreview() }
             .onChange(of: autoPaletteColorCount) { _, _ in updatePreview() }
             .onChange(of: saturation) { _, _ in updatePreview() }
+            .onChange(of: style) { _, _ in updatePreview() }
             .onChange(of: outline) { _, _ in updatePreview() }
             .onChange(of: transparentBackground) { _, _ in
                 detectSubjectIfNeeded()
@@ -302,6 +316,7 @@ struct PixelArtView: View {
             transparentBackground: usingChromaKeyFallback,
             spriteSize: spriteExportEnabled ? Int(spriteSize) : nil,
             saturation: saturation,
+            style: style,
             outline: outline,
             showGrid: showGrid
         )

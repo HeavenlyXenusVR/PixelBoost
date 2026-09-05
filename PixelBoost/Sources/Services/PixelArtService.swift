@@ -9,6 +9,13 @@ import UIKit
 /// nearest-neighbor scaling so every block reads as one hard-edged square
 /// instead of a blurry downscale.
 enum PixelArtService {
+    enum Style: String, CaseIterable, Identifiable {
+        case crisp = "Crisp / Game-like"
+        case balanced = "Balanced"
+        case soft = "Soft / Painterly"
+        var id: String { rawValue }
+    }
+
     /// Per-channel bit depth applied after posterizing (if any) — a
     /// separate knob from `colorLevels`'s flat "N steps on every channel"
     /// crush: this reproduces the actual RGB565/RGBA8888 bit layouts real
@@ -140,6 +147,11 @@ enum PixelArtService {
         /// posterize/depth/palette so those steps quantize the boosted
         /// colors, not the original ones.
         var saturation: Double = 1.0
+        /// Overall look of the filter: `crisp` keeps hard edges and a
+        /// more game-like silhouette, `soft` smooths the block transitions
+        /// and keeps the result more painterly, `balanced` sits between
+        /// the two.
+        var style: Style = .balanced
         /// Traces a black border around every block whose color differs
         /// enough from a right/bottom neighbor — the hard-edged outline
         /// classic pixel-art sprites use to separate shapes, rather than
@@ -247,6 +259,10 @@ enum PixelArtService {
             }
         }
 
+        if let cleaned = cleanSmallPaletteNoise(colored, style: options.style) {
+            colored = cleaned
+        }
+
         if options.transparentBackground, let keyed = withTransparentBackground(colored) {
             colored = keyed
         }
@@ -260,7 +276,7 @@ enum PixelArtService {
             // one pixel into whichever side gets flagged rather than
             // drawing a clean line between the two.
             if options.outline, var buffer = readRGBA(colored) {
-                paintEdgePixelsBlack(&buffer, mask: computeEdgeMask(buffer))
+                paintEdgePixelsBlack(&buffer, mask: computeEdgeMask(buffer, style: options.style))
                 colored = makeImage(buffer) ?? colored
             }
             return UIImage(cgImage: colored, scale: 1, orientation: .up)
@@ -276,13 +292,13 @@ enum PixelArtService {
         // corresponding block boundaries in the full-size canvas below —
         // painting the small-grid pixels themselves black would blacken
         // whole blocks once nearest-neighbor-enlarged, not draw a border.
-        let edgeMask = options.outline ? readRGBA(colored).map(computeEdgeMask) : nil
+        let edgeMask = options.outline ? readRGBA(colored).map { computeEdgeMask($0, style: options.style) } : nil
 
         guard let blocky = draw(colored, into: outputSize, interpolation: .none) else { return nil }
 
         let outlined: UIImage
         if let edgeMask {
-            outlined = withOutline(blocky, mask: edgeMask, blockSize: blockSize, size: outputSize)
+            outlined = withOutline(blocky, mask: edgeMask, blockSize: blockSize, size: outputSize, style: options.style)
         } else {
             outlined = UIImage(cgImage: blocky, scale: 1, orientation: .up)
         }
@@ -472,6 +488,64 @@ enum PixelArtService {
         return makeImage(buffer)
     }
 
+    /// Removes tiny single-pixel noise from the already-blocked image by
+    /// replacing outlier pixels with the neighborhood's average color — a
+    /// tiny cleanup pass that makes the retro palette result read as a
+    /// deliberate sprite instead of a noisy posterized photo.
+    private static func cleanSmallPaletteNoise(_ cgImage: CGImage, style: Style) -> CGImage? {
+        guard var buffer = readRGBA(cgImage), buffer.width > 2, buffer.height > 2 else { return nil }
+        var cleaned = buffer
+
+        let threshold: Double
+        switch style {
+        case .crisp:
+            threshold = 30
+        case .balanced:
+            threshold = 26
+        case .soft:
+            threshold = 20
+        }
+
+        for y in 1..<(buffer.height - 1) {
+            for x in 1..<(buffer.width - 1) {
+                let offset = y * buffer.bytesPerRow + x * 4
+                let centerR = Int(buffer.pixels[offset])
+                let centerG = Int(buffer.pixels[offset + 1])
+                let centerB = Int(buffer.pixels[offset + 2])
+                let centerA = Int(buffer.pixels[offset + 3])
+                if centerA < 8 { continue }
+
+                var rTotal = 0, gTotal = 0, bTotal = 0, aTotal = 0, count = 0
+                for ny in (y - 1)...(y + 1) {
+                    for nx in (x - 1)...(x + 1) {
+                        let neighborOffset = ny * buffer.bytesPerRow + nx * 4
+                        if nx < 0 || nx >= buffer.width || ny < 0 || ny >= buffer.height { continue }
+                        rTotal += Int(buffer.pixels[neighborOffset])
+                        gTotal += Int(buffer.pixels[neighborOffset + 1])
+                        bTotal += Int(buffer.pixels[neighborOffset + 2])
+                        aTotal += Int(buffer.pixels[neighborOffset + 3])
+                        count += 1
+                    }
+                }
+                let avgR = Double(rTotal) / Double(max(1, count))
+                let avgG = Double(gTotal) / Double(max(1, count))
+                let avgB = Double(bTotal) / Double(max(1, count))
+                let avgA = Double(aTotal) / Double(max(1, count))
+
+                let centerLuma = 0.299 * Double(centerR) + 0.587 * Double(centerG) + 0.114 * Double(centerB)
+                let avgLuma = 0.299 * avgR + 0.587 * avgG + 0.114 * avgB
+                let hueDelta = abs(centerR - Int(avgR)) + abs(centerG - Int(avgG)) + abs(centerB - Int(avgB))
+                if abs(centerLuma - avgLuma) > threshold && hueDelta > 60 {
+                    cleaned.pixels[offset] = UInt8(max(0, min(255, avgR.rounded())))
+                    cleaned.pixels[offset + 1] = UInt8(max(0, min(255, avgG.rounded())))
+                    cleaned.pixels[offset + 2] = UInt8(max(0, min(255, avgB.rounded())))
+                    cleaned.pixels[offset + 3] = UInt8(max(0, min(255, avgA.rounded())))
+                }
+            }
+        }
+        return makeImage(cleaned)
+    }
+
     /// Recolors every pixel `mask` flags as a right/bottom edge to black,
     /// in place — the native-sprite-scale equivalent of `withOutline`
     /// below, which instead draws a separate line at block boundaries in
@@ -564,24 +638,53 @@ enum PixelArtService {
     /// Computed at the small (one-pixel-per-block) scale, same as
     /// `quantize`/`mapToPalette` — `width`/`height` here are block counts,
     /// not output pixels.
-    private static func computeEdgeMask(_ buffer: RGBABuffer) -> EdgeMask {
-        let threshold = 60
+    private static func computeEdgeMask(_ buffer: RGBABuffer, style: Style) -> EdgeMask {
         var rightEdges = [Bool](repeating: false, count: buffer.width * buffer.height)
         var bottomEdges = rightEdges
-        func diff(_ o1: Int, _ o2: Int) -> Int {
-            abs(Int(buffer.pixels[o1]) - Int(buffer.pixels[o2]))
-                + abs(Int(buffer.pixels[o1 + 1]) - Int(buffer.pixels[o2 + 1]))
-                + abs(Int(buffer.pixels[o1 + 2]) - Int(buffer.pixels[o2 + 2]))
+
+        let baseThreshold: Int
+        switch style {
+        case .crisp:
+            baseThreshold = 38
+        case .balanced:
+            baseThreshold = 46
+        case .soft:
+            baseThreshold = 55
         }
+
+        func luminance(_ r: UInt8, _ g: UInt8, _ b: UInt8) -> Double {
+            0.299 * Double(r) + 0.587 * Double(g) + 0.114 * Double(b)
+        }
+
+        func diff(_ o1: Int, _ o2: Int) -> Int {
+            let dr = abs(Int(buffer.pixels[o1]) - Int(buffer.pixels[o2]))
+            let dg = abs(Int(buffer.pixels[o1 + 1]) - Int(buffer.pixels[o2 + 1]))
+            let db = abs(Int(buffer.pixels[o1 + 2]) - Int(buffer.pixels[o2 + 2]))
+            let lumaA = luminance(buffer.pixels[o1], buffer.pixels[o1 + 1], buffer.pixels[o1 + 2])
+            let lumaB = luminance(buffer.pixels[o2], buffer.pixels[o2 + 1], buffer.pixels[o2 + 2])
+            let lumaDelta = abs(lumaA - lumaB)
+            return dr + dg + db + Int(lumaDelta * 0.8)
+        }
+
         for y in 0..<buffer.height {
             for x in 0..<buffer.width {
                 let offset = y * buffer.bytesPerRow + x * 4
                 let index = y * buffer.width + x
-                if x + 1 < buffer.width, diff(offset, offset + 4) > threshold {
-                    rightEdges[index] = true
+
+                if x + 1 < buffer.width {
+                    let rightOffset = offset + 4
+                    let rightThreshold = baseThreshold + Int((luminance(buffer.pixels[offset], buffer.pixels[offset + 1], buffer.pixels[offset + 2]) + luminance(buffer.pixels[rightOffset], buffer.pixels[rightOffset + 1], buffer.pixels[rightOffset + 2])) * 0.08)
+                    if diff(offset, rightOffset) > rightThreshold {
+                        rightEdges[index] = true
+                    }
                 }
-                if y + 1 < buffer.height, diff(offset, offset + buffer.bytesPerRow) > threshold {
-                    bottomEdges[index] = true
+
+                if y + 1 < buffer.height {
+                    let downOffset = offset + buffer.bytesPerRow
+                    let downThreshold = baseThreshold + Int((luminance(buffer.pixels[offset], buffer.pixels[offset + 1], buffer.pixels[offset + 2]) + luminance(buffer.pixels[downOffset], buffer.pixels[downOffset + 1], buffer.pixels[downOffset + 2])) * 0.08)
+                    if diff(offset, downOffset) > downThreshold {
+                        bottomEdges[index] = true
+                    }
                 }
             }
         }
@@ -594,12 +697,21 @@ enum PixelArtService {
     /// call per block — the block count can run into the hundreds of
     /// thousands on a small `blockSize`/large photo, and CGContext's
     /// per-call overhead adds up fast at that scale).
-    private static func withOutline(_ cgImage: CGImage, mask: EdgeMask, blockSize: Int, size: CGSize) -> UIImage {
+    private static func withOutline(_ cgImage: CGImage, mask: EdgeMask, blockSize: Int, size: CGSize, style: Style) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let image = UIImage(cgImage: cgImage)
+        let outlineWidth: CGFloat
+        switch style {
+        case .crisp:
+            outlineWidth = max(1, CGFloat(blockSize) * 0.22)
+        case .balanced:
+            outlineWidth = max(1, CGFloat(blockSize) * 0.18)
+        case .soft:
+            outlineWidth = max(1, CGFloat(blockSize) * 0.12)
+        }
         return renderer.image { rendererContext in
             // UIImage-level draw, not the raw CGContext.draw(cgImage:in:)
             // this used to call — the latter draws a CGImage's bytes
@@ -629,7 +741,7 @@ enum PixelArtService {
             let strokeContext = rendererContext.cgContext
             strokeContext.addPath(path)
             strokeContext.setStrokeColor(UIColor.black.cgColor)
-            strokeContext.setLineWidth(max(1, CGFloat(blockSize) * 0.15))
+            strokeContext.setLineWidth(outlineWidth)
             strokeContext.strokePath()
         }
     }
