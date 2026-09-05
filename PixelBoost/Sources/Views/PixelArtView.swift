@@ -209,23 +209,23 @@ struct PixelArtView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(PBColor.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: blockSize) { _, _ in updatePreview() }
-            .onChange(of: posterize) { _, _ in updatePreview() }
-            .onChange(of: colorLevels) { _, _ in updatePreview() }
-            .onChange(of: colorDepth) { _, _ in updatePreview() }
-            .onChange(of: palette) { _, _ in updatePreview() }
-            .onChange(of: autoPaletteColorCount) { _, _ in updatePreview() }
-            .onChange(of: saturation) { _, _ in updatePreview() }
-            .onChange(of: style) { _, _ in updatePreview() }
-            .onChange(of: outline) { _, _ in updatePreview() }
-            .onChange(of: transparentBackground) { _, _ in
+            .onChange(of: blockSize, perform: { _ in updatePreview() })
+            .onChange(of: posterize, perform: { _ in updatePreview() })
+            .onChange(of: colorLevels, perform: { _ in updatePreview() })
+            .onChange(of: colorDepth, perform: { _ in updatePreview() })
+            .onChange(of: palette, perform: { _ in updatePreview() })
+            .onChange(of: autoPaletteColorCount, perform: { _ in updatePreview() })
+            .onChange(of: saturation, perform: { _ in updatePreview() })
+            .onChange(of: style, perform: { _ in updatePreview() })
+            .onChange(of: outline, perform: { _ in updatePreview() })
+            .onChange(of: transparentBackground, perform: { _ in
                 detectSubjectIfNeeded()
                 updatePreview()
-            }
-            .onChange(of: spriteExportEnabled) { _, _ in updatePreview() }
-            .onChange(of: spriteSize) { _, _ in updatePreview() }
-            .onChange(of: showGrid) { _, _ in updatePreview() }
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
+            })
+            .onChange(of: spriteExportEnabled, perform: { _ in updatePreview() })
+            .onChange(of: spriteSize, perform: { _ in updatePreview() })
+            .onChange(of: showGrid, perform: { _ in updatePreview() })
+            .onChange(of: viewModel.imageVersion, perform: { _ in refreshFromCurrentImage() })
             .onAppear { refreshFromCurrentImage() }
         }
     }
