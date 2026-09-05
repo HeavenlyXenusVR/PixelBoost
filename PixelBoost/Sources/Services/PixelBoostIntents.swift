@@ -29,11 +29,15 @@ struct UpscalePhotoIntent: AppIntent {
         }
 
         let outcome = await UpscaleRunner.run(sourceImage, using: upscaler, sourceFileSizeBytes: photo.data.count) { _ in }
-        guard let result = outcome.result, let pngData = result.image.pngData() else {
+        guard let result = outcome.result,
+              let data = ImportExportService.boundedData(for: result.image)
+        else {
             throw outcome.error ?? UpscaleError.noModelOutput
         }
 
-        let resultFile = IntentFile(data: pngData, filename: "upscaled.png", type: .png)
+        let filename = result.image.hasAlphaChannel ? "upscaled.png" : "upscaled.jpg"
+        let type: UTType = result.image.hasAlphaChannel ? .png : .jpeg
+        let resultFile = IntentFile(data: data, filename: filename, type: type)
         return .result(value: resultFile)
     }
 }

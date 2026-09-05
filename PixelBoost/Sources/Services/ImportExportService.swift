@@ -110,7 +110,7 @@ enum ImportExportService {
     /// upload/export copy, never the actual result image the user sees, so the
     /// app doesn't OOM right when it hits 100% just because cloud backup was
     /// trying to emit a full-resolution PNG/JPEG of a 20MP+ source.
-    private static func boundedForUpload(_ image: UIImage) -> UIImage {
+    static func boundedForUpload(_ image: UIImage) -> UIImage {
         let pixelBudget: Double = 16_000_000
         let pixels = Double(image.size.width) * Double(image.size.height)
         guard pixels > pixelBudget, pixels > 0 else { return image }
@@ -129,6 +129,11 @@ enum ImportExportService {
             context.cgContext.interpolationQuality = .high
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
+    }
+
+    static func boundedData(for image: UIImage, quality: Double = 0.85) -> Data? {
+        let uploadImage = boundedForUpload(image)
+        return PhotoLibrarySaver.encodedData(for: uploadImage, format: .auto, quality: quality)
     }
 
     /// - Returns: the encoded bytes and whether they're PNG (vs. JPEG) —
