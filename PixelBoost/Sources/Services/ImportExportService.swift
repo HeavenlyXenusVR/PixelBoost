@@ -104,11 +104,39 @@ enum ImportExportService {
         _ = try await APIClient.data(for: request)
     }
 
+    /// Huge photos can still exceed the server's 60MB multipart cap when the
+    /// upscale finishes and the auto-backup path immediately tries to encode the
+    /// full result, even after the in-memory tiling fix. Downsample only the
+    /// upload/export copy, never the actual result image the user sees, so the
+    /// app doesn't OOM right when it hits 100% just because cloud backup was
+    /// trying to emit a full-resolution PNG/JPEG of a 20MP+ source.
+    private static func boundedForUpload(_ image: UIImage) -> UIImage {
+        let pixelBudget: Double = 16_000_000
+        let pixels = Double(image.size.width) * Double(image.size.height)
+        guard pixels > pixelBudget, pixels > 0 else { return image }
+
+        let scale = sqrt(pixelBudget / pixels)
+        let targetSize = CGSize(
+            width: max(1, image.size.width * CGFloat(scale)),
+            height: max(1, image.size.height * CGFloat(scale))
+        )
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = !image.hasAlphaChannel
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        return renderer.image { context in
+            context.cgContext.interpolationQuality = .high
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+    }
+
     /// - Returns: the encoded bytes and whether they're PNG (vs. JPEG) —
     ///   the caller needs to know which to set the right filename/
     ///   Content-Type on the multipart upload.
     private static func encode(_ image: UIImage) -> (data: Data, isPNG: Bool)? {
-        guard let data = PhotoLibrarySaver.encodedData(for: image, format: .auto, quality: 0.85) else { return nil }
-        return (data, image.hasAlphaChannel)
+        let uploadImage = boundedForUpload(image)
+        guard let data = PhotoLibrarySaver.encodedData(for: uploadImage, format: .auto, quality: 0.85) else { return nil }
+        return (data, uploadImage.hasAlphaChannel)
     }
 }
