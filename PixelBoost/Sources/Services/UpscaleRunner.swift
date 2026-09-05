@@ -20,6 +20,8 @@ enum UpscaleRunner {
     ///   relative to the upscale itself, and only ever applied to the copy
     ///   fed to the model, never to what gets logged/returned as the
     ///   "source" for anything else.
+    /// - Parameter antiAliasingAmount: 0...1, a gentle blur pass applied to
+    ///   the final result to smooth jagged edges after the upscale itself.
     /// - Parameter sharpenAmount: 0...1, run via `PostSharpen` on the
     ///   result *after* upscaling succeeds — a no-op on failure, since
     ///   there's nothing to sharpen.
@@ -48,6 +50,7 @@ enum UpscaleRunner {
         using upscaler: ImageUpscaling,
         sourceFileSizeBytes: Int?,
         denoiseAmount: Double = 0,
+        antiAliasingAmount: Double = 0.35,
         sharpenAmount: Double = 0,
         autoRenderDenoise: Bool = false,
         blendAmount: Double = 1.0,
@@ -62,6 +65,9 @@ enum UpscaleRunner {
             var result = try await upscaler.upscale(upscalerInput, progress: progress)
             if blendAmount < 1.0 {
                 result = await blended(result, sourceImage: sourceImage, upscaler: upscaler, amount: blendAmount) ?? result
+            }
+            if antiAliasingAmount > 0 {
+                result = UpscaleResult(image: ImageTransform.antiAliased(result.image, amount: antiAliasingAmount), tileCount: result.tileCount)
             }
             if sharpenAmount > 0 {
                 result = UpscaleResult(image: PostSharpen.apply(result.image, amount: sharpenAmount), tileCount: result.tileCount)

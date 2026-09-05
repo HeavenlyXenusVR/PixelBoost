@@ -176,6 +176,7 @@ final class UpscalerProvider: ObservableObject {
     private static let exportFormatDefaultsKey = "com.pixelboost.exportFormat"
     private static let exportQualityDefaultsKey = "com.pixelboost.exportQuality"
     private static let denoiseBeforeUpscaleDefaultsKey = "com.pixelboost.denoiseBeforeUpscale"
+    private static let antiAliasingAmountDefaultsKey = "com.pixelboost.antiAliasingAmount"
     private static let sharpenAmountDefaultsKey = "com.pixelboost.sharpenAmount"
     private static let autoSaveEnabledDefaultsKey = "com.pixelboost.autoSaveEnabled"
     /// Not `private` — `UpscaleRunner` reads this directly (it has no
@@ -240,6 +241,13 @@ final class UpscalerProvider: ObservableObject {
     /// since it softens fine detail slightly on already-clean photos.
     @Published var denoiseBeforeUpscale: Bool {
         didSet { UserDefaults.standard.set(denoiseBeforeUpscale, forKey: Self.denoiseBeforeUpscaleDefaultsKey) }
+    }
+    /// 0...1, a subtle Gaussian blur applied to the final result before any
+    /// sharpen pass. This is the default anti-aliasing step for upscaled
+    /// output — higher values smooth stair-stepped edges more, while 0 keeps
+    /// the full model output untouched.
+    @Published var antiAliasingAmount: Double {
+        didSet { UserDefaults.standard.set(antiAliasingAmount, forKey: Self.antiAliasingAmountDefaultsKey) }
     }
     /// 0...1, applied via `PostSharpen` right after the upscale finishes
     /// (on the final, already-upscaled image). 0 is off — a model's own
@@ -348,11 +356,13 @@ final class UpscalerProvider: ObservableObject {
         let storedQuality = UserDefaults.standard.object(forKey: Self.exportQualityDefaultsKey) as? Double
         exportQuality = storedQuality ?? 0.9
         denoiseBeforeUpscale = UserDefaults.standard.bool(forKey: Self.denoiseBeforeUpscaleDefaultsKey)
+        let storedAntiAliasing = UserDefaults.standard.object(forKey: Self.antiAliasingAmountDefaultsKey) as? Double
+        antiAliasingAmount = storedAntiAliasing ?? 0.35
         let storedSharpen = UserDefaults.standard.object(forKey: Self.sharpenAmountDefaultsKey) as? Double
         sharpenAmount = storedSharpen ?? 0
         autoSaveEnabled = UserDefaults.standard.bool(forKey: Self.autoSaveEnabledDefaultsKey)
         autoCloudBackupEnabled = UserDefaults.standard.bool(forKey: Self.autoCloudBackupEnabledDefaultsKey)
-        preserveOriginal = UserDefaults.standard.bool(forKey: Self.preserveOriginalDefaultsKey)
+        preserveOriginal = (UserDefaults.standard.object(forKey: Self.preserveOriginalDefaultsKey) as? Bool) ?? false
         addToAlbumEnabled = (UserDefaults.standard.object(forKey: Self.addToAlbumEnabledDefaultsKey) as? Bool) ?? true
         watermarkEnabled = UserDefaults.standard.bool(forKey: Self.watermarkEnabledDefaultsKey)
         watermarkText = UserDefaults.standard.string(forKey: Self.watermarkTextDefaultsKey) ?? ""

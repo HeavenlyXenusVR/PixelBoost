@@ -143,6 +143,7 @@ final class BatchUpscaleViewModel: ObservableObject {
             let outcome = await UpscaleRunner.run(
                 normalized, using: upscaler, sourceFileSizeBytes: fileSizeBytes,
                 denoiseAmount: provider.denoiseBeforeUpscale ? 0.5 : 0,
+                antiAliasingAmount: provider.antiAliasingAmount,
                 sharpenAmount: provider.sharpenAmount,
                 autoRenderDenoise: autoRenderDenoise,
                 blendAmount: provider.upscaleStrength
