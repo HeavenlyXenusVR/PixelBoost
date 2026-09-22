@@ -18,6 +18,8 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
     case lowLight
     case render3D
     case stylizedRender
+    case sharp2x
+    case animeVideo
     case textDocument
 
     var id: String { rawValue }
@@ -31,6 +33,8 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
         case .lowLight: return "Fast & Clean"
         case .render3D: return "3D / CG Render"
         case .stylizedRender: return "Toon / Cel-Shaded Render"
+        case .sharp2x: return "Native 2×"
+        case .animeVideo: return "Anime Video / Line Art"
         case .textDocument: return "Text & Documents"
         }
     }
@@ -69,7 +73,32 @@ enum UpscaleModelChoice: String, CaseIterable, Identifiable {
         // trained on a broader illustration mix) — this one specifically
         // targets clean-line toon/cel content. See Models/README.md.
         case .stylizedRender: return "RealCUGAN"
+        // Real-ESRGAN x2plus: the only bundled model with a native 2x
+        // ratio. Every other model is architecturally 4x, so a 2x request
+        // makes them analyze at 4x and resample down; this one produces the
+        // requested size directly, which means for the same model-input
+        // budget it covers 4x the source area per tile. Best pick when
+        // Output Scale is 2x — at 4x its output has to be stretched
+        // instead, which is the trade in reverse.
+        case .sharp2x: return "RealESRGANx2"
+        // realesr-animevideov3: SRVGGNetCompact (16 convs), trained on
+        // anime *video* frames — built for the compression artifacts and
+        // flat line work of that source, and much lighter than the
+        // RRDBNet anime model, which matters now that Detail lets the
+        // model see many more pixels.
+        case .animeVideo: return "RealESRGANAnimeVideo"
         case .textDocument: return "RealESRGANText"
+        }
+    }
+
+    /// The model's own architectural output ratio — what `ImageTiler`
+    /// plans against and what `CoreMLTileUpscaler.Config.scaleFactor` is
+    /// set to. Independent of `UpscaleFactor` (the size the *user* asked
+    /// for): see `ScaledOutputUpscaler`.
+    var nativeScale: Int {
+        switch self {
+        case .sharp2x: return 2
+        default: return 4
         }
     }
 
@@ -224,6 +253,9 @@ final class UpscalerProvider: ObservableObject {
     /// upscale's source/result images get uploaded alongside its metadata.
     static let autoCloudBackupEnabledDefaultsKey = "com.pixelboost.autoCloudBackupEnabled"
     /// Read by `UpscaleRunner` the same way (no provider instance there).
+    /// `nonisolated` because this type is `@MainActor` but that read
+    /// happens from a detached background task — these only touch
+    /// UserDefaults, which is thread-safe.
     static let temporaryCloudSaveEnabledDefaultsKey = "com.pixelboost.temporaryCloudSaveEnabled"
     static let temporaryCloudTTLHoursDefaultsKey = "com.pixelboost.temporaryCloudTTLHours"
 
@@ -231,12 +263,12 @@ final class UpscalerProvider: ObservableObject {
     /// `storedTemporaryCloudTTLHours` and then deleted automatically. Only
     /// the *result* — the source photo is the separate, off-by-default Auto
     /// Cloud Backup.
-    static var storedTemporaryCloudSaveEnabled: Bool {
+    nonisolated static var storedTemporaryCloudSaveEnabled: Bool {
         UserDefaults.standard.object(forKey: temporaryCloudSaveEnabledDefaultsKey) as? Bool ?? true
     }
 
     /// Clamped to the server's own 1...168 accepted range.
-    static var storedTemporaryCloudTTLHours: Int {
+    nonisolated static var storedTemporaryCloudTTLHours: Int {
         let stored = UserDefaults.standard.object(forKey: temporaryCloudTTLHoursDefaultsKey) as? Int ?? 24
         return min(max(stored, 1), 168)
     }
@@ -538,16 +570,16 @@ final class UpscalerProvider: ObservableObject {
             cached.updateOverlap(overlap)
             return cached
         }
-        guard let loaded = await loadUpscaler(named: choice.modelName, overlap: overlap) else { return nil }
+        guard let loaded = await loadUpscaler(named: choice.modelName, overlap: overlap, nativeScale: choice.nativeScale) else { return nil }
         cache[choice.modelName] = loaded
         return loaded
     }
 
-    private func loadUpscaler(named modelName: String, overlap: Int) async -> CoreMLTileUpscaler? {
+    private func loadUpscaler(named modelName: String, overlap: Int, nativeScale: Int) async -> CoreMLTileUpscaler? {
         isLoadingModel = true
         defer { isLoadingModel = false }
 
-        let config = CoreMLTileUpscaler.Config(tileSize: 128, scaleFactor: 4, overlap: overlap)
+        let config = CoreMLTileUpscaler.Config(tileSize: 128, scaleFactor: nativeScale, overlap: overlap)
         // Model failed to load (not bundled, corrupt, etc.) — the caller
         // doesn't cache a nil under this key, so a later retry (e.g. after
         // an app update that adds the model) can succeed.

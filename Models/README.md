@@ -1,6 +1,6 @@
 # Models
 
-Four Core ML models are bundled, picked automatically via `UpscalerProvider`
+Eight Core ML models are bundled, picked automatically via `UpscalerProvider`
 (Auto mode) or manually in the model picker — all
 [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)-family conversions,
 BSD-3-Clause. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the
@@ -49,6 +49,43 @@ for Real-CUGAN, confirmed the negative-pad→slicing rewrite produces
 bit-identical output to the original before converting — correct 4x
 output shape, no NaNs, plausible value range) — like every model here,
 **the actual compiled `.mlmodel` has not been run in Xcode/on-device**.
+
+Two more were added 2026-09-22, alongside the Detail setting that lets the
+model actually see a photo's real resolution again (see
+`CoreMLTileUpscaler`):
+
+| File | Source | Architecture | Best for |
+|---|---|---|---|
+| `RealESRGANx2.mlpackage` | `RealESRGAN_x2plus.pth` | RRDBNet, 23 blocks, **native 2x** | A 2x upscale. Every other bundled model is architecturally 4x, so a 2x request makes them analyze at 4x and resample down; this one produces the requested ratio directly, covering 4x the source area per tile for the same model-input budget. At 4x its output has to be stretched instead — the same trade in reverse, which is why it's a separate pick rather than the default |
+| `RealESRGANAnimeVideo.mlpackage` | `realesr-animevideov3.pth` | SRVGGNetCompact, 16 convs | Anime video frames and flat line art — trained on that source's compression artifacts specifically, and far lighter than the RRDBNet anime model (1.3MB vs ~9MB), which matters more now that Detail can feed a model 4-16x as many pixels |
+
+Both are BSD-3-Clause from the same official Real-ESRGAN releases as the
+original four. Selectable as "Native 2×" (`UpscaleModelChoice.sharp2x`)
+and "Anime Video / Line Art" (`.animeVideo`).
+
+`x2plus` needed the `pixel_unshuffle` path restored in `convert/rrdbnet.py`
+— a scale=2 RRDBNet packs each 2x2 block of input pixels into the channel
+dimension (3 -> 12 channels) before the body runs, so its `conv_first`
+expects 12 input channels and the checkpoint simply won't load without it.
+That path was originally stripped as dead code for x4plus. It's
+`F.pixel_unshuffle`, not basicsr's hand-rolled view/permute/reshape: the
+hand-rolled version builds its target shape from `x.size()`, which traces
+as tensor-derived constants and makes coremltools fail with "only
+0-dimensional arrays can be converted to Python scalars". The two were
+asserted numerically identical before the swap. `convert.py` takes
+`--scale {1,2,4}` for this.
+
+Sanity-checked the same way as every other model here — the un-converted
+PyTorch model, run on a synthetic photo-like image (smooth base plus hard
+edges) downscaled and fed back in: correct output shape, no NaNs,
+structurally correct output (0.97 / 0.94 correlation with the ground
+truth) carrying visibly more edge energy than bicubic. PSNR lands *below*
+bicubic on that test, which is expected rather than alarming for GAN-
+trained models on clean synthetic input: they hallucinate plausible
+detail rather than minimizing per-pixel error, and they're trained on
+real-world degradations, not clean bicubic downsampling. As with every
+model here, **the compiled Core ML model has not been run in Xcode or
+on-device** — that needs macOS.
 
 `Auto` (see `UpscalerProvider.autoSelectModel`) tests every bundled model
 above against a crop of the photo and keeps whichever scores sharper,

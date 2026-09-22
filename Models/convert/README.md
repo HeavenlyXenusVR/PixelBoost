@@ -29,6 +29,17 @@ python3 convert.py --weights RealESRGAN_x4plus.pth --num-block 23 \
 python3 convert.py --weights RealESRGAN_x4plus_anime_6B.pth --num-block 6 \
     --out RealESRGANAnime.mlpackage --description "Real-ESRGAN x4plus anime_6B"
 
+# Native 2x model — note --scale 2 (a scale=2 RRDBNet pixel-unshuffles its
+# input, so conv_first takes 12 channels; the checkpoint won't load without it)
+curl -sL https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth -o RealESRGAN_x2plus.pth
+python3 convert.py --weights RealESRGAN_x2plus.pth --scale 2 --num-block 23 \
+    --out RealESRGANx2.mlpackage --description "Real-ESRGAN x2plus"
+
+# Anime video / line art — SRVGGNetCompact again, but 16 convs not 32
+curl -sL https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth -o realesr-animevideov3.pth
+python3 convert.py --weights realesr-animevideov3.pth --arch srvgg --num-conv 16 \
+    --out RealESRGANAnimeVideo.mlpackage --description "Real-ESRGAN realesr-animevideov3"
+
 # Portrait model — same RRDBNet architecture as x4plus, trained without a
 # GAN loss, so it lands smoother/lower-artifact rather than sharper
 python3 convert.py --weights RealESRNet_x4plus.pth --num-block 23 \

@@ -49,12 +49,25 @@ class RRDB(nn.Module):
 
 
 class RRDBNet(nn.Module):
-    """x4plus configuration only (scale=4) — the pixel-unshuffle path used by
-    the scale=1/2 variants is intentionally not ported since it's dead code
-    for this model."""
+    """x4plus (scale=4) and x2plus (scale=2) configurations.
 
-    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32):
+    Upstream handles scales below 4 by pixel-unshuffling the input first —
+    a scale=2 model packs each 2x2 block of pixels into the channel
+    dimension (3 -> 12 channels at half the spatial size), runs the same
+    body, and then upsamples 4x, netting 2x overall. That path was
+    originally left out of this port as dead code for x4plus; it's back
+    because the x2plus checkpoint genuinely needs it (its conv_first
+    expects 12 input channels, so loading it without this fails outright
+    rather than producing subtly wrong output).
+    """
+
+    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4):
         super(RRDBNet, self).__init__()
+        self.scale = scale
+        if scale == 2:
+            num_in_ch = num_in_ch * 4
+        elif scale == 1:
+            num_in_ch = num_in_ch * 16
         self.conv_first = nn.Conv2d(num_in_ch, num_feat, 3, 1, 1)
         self.body = make_layer(RRDB, num_block, num_feat=num_feat, num_grow_ch=num_grow_ch)
         self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
@@ -65,10 +78,32 @@ class RRDBNet(nn.Module):
         self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
     def forward(self, x):
-        feat = self.conv_first(x)
+        if self.scale == 2:
+            feat = pixel_unshuffle(x, scale=2)
+        elif self.scale == 1:
+            feat = pixel_unshuffle(x, scale=4)
+        else:
+            feat = x
+        feat = self.conv_first(feat)
         body_feat = self.conv_body(self.body(feat))
         feat = feat + body_feat
         feat = self.lrelu(self.conv_up1(F.interpolate(feat, scale_factor=2, mode='nearest')))
         feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode='nearest')))
         out = self.conv_last(self.lrelu(self.conv_hr(feat)))
         return out
+
+
+def pixel_unshuffle(x, scale):
+    """Inverse of nn.PixelShuffle: packs each `scale`x`scale` spatial block
+    into the channel dimension.
+
+    This is `F.pixel_unshuffle` rather than basicsr's hand-rolled
+    view/permute/reshape. The hand-rolled version reads `x.size()` and
+    builds the target shape from those values, which `torch.jit.trace`
+    records as tensor-derived shape constants — coremltools then fails
+    converting them ("only 0-dimensional arrays can be converted to Python
+    scalars"). The native op traces as a single fixed-shape operation and
+    converts cleanly; the two are numerically identical (asserted in
+    convert.py's own check).
+    """
+    return F.pixel_unshuffle(x, scale)

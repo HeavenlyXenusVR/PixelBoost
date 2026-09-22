@@ -131,6 +131,8 @@ private struct ModelCard: View {
         case .lowLight: return "hare"
         case .render3D: return "cube"
         case .stylizedRender: return "paintbrush"
+        case .sharp2x: return "arrow.up.right.and.arrow.down.left.rectangle"
+        case .animeVideo: return "film"
         case .textDocument: return "doc.text"
         }
     }
@@ -144,6 +146,8 @@ private struct ModelCard: View {
         case .lowLight: return "realesr-general-x4v3 — smaller & quicker everyday default"
         case .render3D: return "BSRGAN — for a 3D/Blender render, not a real photo"
         case .stylizedRender: return "Real-CUGAN — clean lines for a toon/cel-shaded render"
+        case .sharp2x: return "Real-ESRGAN x2plus — native 2×, the sharpest choice at 2× output"
+        case .animeVideo: return "realesr-animevideov3 — light; anime frames and flat line art"
         case .textDocument: return "Crisp edges on type"
         }
     }

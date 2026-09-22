@@ -1,8 +1,8 @@
 # Third-party notices
 
-## Real-ESRGAN (RealESRGAN.mlpackage, RealESRGANAnime.mlpackage, RealESRNet.mlpackage, RealESRGeneralV3.mlpackage)
+## Real-ESRGAN (RealESRGAN.mlpackage, RealESRGANAnime.mlpackage, RealESRNet.mlpackage, RealESRGeneralV3.mlpackage, RealESRGANx2.mlpackage, RealESRGANAnimeVideo.mlpackage)
 
-All four bundled models are Core ML conversions of checkpoints from
+All six bundled models are Core ML conversions of checkpoints from
 [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (architectures
 defined in [xinntao/BasicSR](https://github.com/xinntao/BasicSR) and in
 Real-ESRGAN's own `realesrgan/archs/`):
@@ -15,8 +15,13 @@ Real-ESRGAN's own `realesrgan/archs/`):
 - `RealESRGeneralV3.mlpackage` ← `realesr-general-x4v3.pth` (fast & clean
   everyday default, SRVGGNetCompact 32 conv layers — a different, smaller
   architecture from the other three)
+- `RealESRGANx2.mlpackage` ← `RealESRGAN_x2plus.pth` (native 2x, RRDBNet 23
+  blocks with a pixel-unshuffled input — the only bundled model whose
+  native ratio isn't 4x)
+- `RealESRGANAnimeVideo.mlpackage` ← `realesr-animevideov3.pth` (anime
+  video / line art, SRVGGNetCompact 16 conv layers)
 
-All four converted with [`convert.py`](convert/convert.py) — see that
+All six converted with [`convert.py`](convert/convert.py) — see that
 folder to reproduce or adapt any of them.
 
 ```

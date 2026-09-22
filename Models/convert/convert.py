@@ -43,6 +43,12 @@ def main():
              "bsrgan (BSRGAN.pth — same RRDBNet math, older layer-naming convention, see bsrgan_arch.py), "
              "or realcugan (up4x-latest-*.pth — a different U-Net architecture entirely, see realcugan_arch.py)"
     )
+    parser.add_argument(
+        "--scale", type=int, default=4, choices=[1, 2, 4],
+        help="Model's native output ratio. 4 for x4plus/anime_6B/RealESRNet, 2 for x2plus "
+             "(which pixel-unshuffles its input first — see rrdbnet.py). Must match "
+             "UpscaleModelChoice.nativeScale on the Swift side."
+    )
     parser.add_argument("--num-block", type=int, default=23, help="RRDBNet num_block (23 for x4plus/RealESRNet, 6 for anime_6B)")
     parser.add_argument("--num-conv", type=int, default=32, help="SRVGGNetCompact num_conv (32 for general-x4v3, 16 for animevideov3)")
     parser.add_argument("--out", default="RealESRGAN.mlpackage", help="Output .mlpackage/.mlmodel path")
@@ -61,13 +67,13 @@ def main():
     args = parser.parse_args()
 
     if args.arch == "rrdbnet":
-        base = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=args.num_block, num_grow_ch=32)
+        base = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=args.num_block, num_grow_ch=32, scale=args.scale)
     elif args.arch == "bsrgan":
         base = BSRGANRRDBNet(in_nc=3, out_nc=3, nf=64, nb=args.num_block, gc=32, sf=4)
     elif args.arch == "realcugan":
         base = UpCunet4x(in_channels=3, out_channels=3)
     else:
-        base = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=args.num_conv, upscale=4, act_type="prelu")
+        base = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=args.num_conv, upscale=args.scale, act_type="prelu")
 
     state = torch.load(args.weights, map_location="cpu", weights_only=True)
     if args.arch in ("bsrgan", "realcugan"):
@@ -117,7 +123,7 @@ def main():
     mlmodel = ct.convert(traced, **convert_kwargs)
     mlmodel.short_description = (
         f"{args.description} ({args.attribution}) — "
-        f"fixed {TILE_SIZE}x{TILE_SIZE} input, 4x output, for tiled use via ImageTiler."
+        f"fixed {TILE_SIZE}x{TILE_SIZE} input, {args.scale}x output, for tiled use via ImageTiler."
     )
     mlmodel.save(args.out)
     print(f"Saved {args.out}")
