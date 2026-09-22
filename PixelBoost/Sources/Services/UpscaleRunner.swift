@@ -50,7 +50,7 @@ enum UpscaleRunner {
         using upscaler: ImageUpscaling,
         sourceFileSizeBytes: Int?,
         denoiseAmount: Double = 0,
-        antiAliasingAmount: Double = 0.35,
+        antiAliasingAmount: Double = 0,
         sharpenAmount: Double = 0,
         autoRenderDenoise: Bool = false,
         blendAmount: Double = 1.0,
@@ -91,14 +91,18 @@ enum UpscaleRunner {
     }
 
     /// Cross-dissolves `result.image` with a plain Lanczos resize of
-    /// `sourceImage` at the same final scale (read off `upscaler`'s own
-    /// `techniqueInfo`, so this matches whatever scale was actually
-    /// requested) — `amount` 0 is entirely the plain resize, 1 entirely
-    /// the model result. `nil` on any failure (falls back to the
-    /// unblended model result, same "best-effort enhancement pass"
-    /// reasoning as `autoRenderDenoise` above).
+    /// `sourceImage` at the result's own final size — `amount` 0 is
+    /// entirely the plain resize, 1 entirely the model result. The scale is
+    /// read off the actual result, not `techniqueInfo.scaleFactor`: that's
+    /// the model's native 4x, which for a 2x target meant building a 4x
+    /// Lanczos copy (16x the source's pixels) just to shrink it again.
+    /// `nil` on any failure (falls back to the unblended model result, same
+    /// "best-effort enhancement pass" reasoning as `autoRenderDenoise`
+    /// above).
     private static func blended(_ result: UpscaleResult, sourceImage: UIImage, upscaler: ImageUpscaling, amount: Double) async -> UpscaleResult? {
-        let scale = Double(upscaler.techniqueInfo.scaleFactor)
+        guard let sourceWidth = sourceImage.cgImage?.width, sourceWidth > 0,
+              let resultWidth = result.image.cgImage?.width else { return nil }
+        let scale = Double(resultWidth) / Double(sourceWidth)
         guard scale > 0,
               let fallback = try? await LanczosUpscaler(scaleFactor: scale).upscale(sourceImage, progress: { _ in }),
               let blendedImage = crossDissolve(result.image, fallback.image, amount: amount)

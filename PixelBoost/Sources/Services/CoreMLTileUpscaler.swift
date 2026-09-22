@@ -79,52 +79,76 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         config.overlap = overlap
     }
 
-    private static func adaptiveTileSettings(for size: CGSize, requestedOverlap: Int) -> (tileSize: Int, overlap: Int) {
-        let area = size.width * size.height
-        let tileSize: Int
-        let overlapLimit: Int
-
-        switch area {
-        case let value where value > 60_000_000:
-            tileSize = 64
-            overlapLimit = 4
-        case let value where value > 24_000_000:
-            tileSize = 96
-            overlapLimit = 6
-        default:
-            tileSize = 128
-            overlapLimit = 8
+    /// Largest final canvas this device can safely composite, in pixels.
+    /// The canvas itself is 4 bytes/pixel, and the post-passes that follow
+    /// (blend, sharpen, watermark, export encode) each hold at least one
+    /// more full-size copy, so this scales with physical RAM rather than
+    /// being one number for every iPhone — 32MP was the old single budget,
+    /// which was fine on 4GB devices but needlessly tight on 8GB ones.
+    static let maxOutputPixels: Double = {
+        let gigabytes = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        switch gigabytes {
+        case 7...: return 64_000_000
+        case 5...: return 48_000_000
+        default: return 32_000_000
         }
+    }()
 
-        let overlap = min(max(4, requestedOverlap), max(4, overlapLimit))
-        return (tileSize: tileSize, overlap: overlap)
-    }
+    /// Model input budget used by `upscale(_:progress:)` — the path Render
+    /// Denoise and the Shortcuts intent take, neither of which has a
+    /// user-facing Detail setting.
+    static let defaultMaxModelInputPixels: Double = 16_000_000
 
     func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UpscaleResult {
+        try await upscale(
+            image, outputScale: Double(config.scaleFactor),
+            maxModelInputPixels: Self.defaultMaxModelInputPixels, progress: progress
+        )
+    }
+
+    /// - Parameter outputScale: final size as a multiple of `image`'s own
+    ///   dimensions — independent of the model's native `scaleFactor`.
+    ///   Each tile's native-scale model output is resampled straight into
+    ///   a canvas of this size, so a 2x target never allocates (or
+    ///   stretches back up from) a 4x-sized intermediate.
+    /// - Parameter maxModelInputPixels: how many source pixels the model
+    ///   actually gets to see. Larger inputs are downscaled *before*
+    ///   inference only to this budget — this is the speed/heat vs. detail
+    ///   dial (see `UpscaleDetail`). Detail the model never sees can't be
+    ///   recovered by it, so this must never be derived from the *output*
+    ///   budget: that was the v3.26.13–v3.26.17 bug, where a 12MP photo was
+    ///   shrunk to ~1MP to fit a 16MP output cap before the model ran.
+    func upscale(
+        _ image: UIImage,
+        outputScale: Double,
+        maxModelInputPixels: Double,
+        progress: @escaping (Double) -> Void
+    ) async throws -> UpscaleResult {
         guard let cgImage = image.cgImage else { throw UpscaleError.invalidImage }
 
         // Normalize once so every tile crop is a plain 1-point-per-pixel,
         // upright image — see UIImage+Tile.swift for why this matters.
         let normalized = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+        let sourceWidth = Double(cgImage.width)
+        let sourceHeight = Double(cgImage.height)
+        let sourcePixels = sourceWidth * sourceHeight
 
-        // A 4x upscale of a 15k-wide ultrawide keyart can require hundreds of
-        // millions of pixels in the final output, which is enough to OOM on
-        // device before the pipeline even gets to save/export. Keep the final
-        // output under a conservative pixel budget and shrink before tiling so
-        // big/wide images still produce a result instead of crashing the app.
-        // The threshold is intentionally conservative on iPhone-class devices,
-        // because the model work and the final compositing are both heavy and
-        // thermal load climbs quickly once the compute graph spills into the
-        // tens of millions of pixels.
-        let maxSafeOutputPixels = 16_000_000.0
-        let sourcePixels = Double(normalized.size.width) * Double(normalized.size.height)
-        let finalPixels = sourcePixels * Double(config.scaleFactor * config.scaleFactor)
+        // Final output size: the requested scale, shrunk only if the canvas
+        // itself wouldn't fit in memory (a 4x of a 15k-wide ultrawide keyart
+        // is hundreds of megapixels). This cap only ever reduces the output
+        // size — it never reduces what the model sees.
+        let requestedOutputPixels = sourcePixels * outputScale * outputScale
+        let outputCap = min(1, sqrt(Self.maxOutputPixels / max(1, requestedOutputPixels)))
+        let canvasWidth = max(1, Int((sourceWidth * outputScale * outputCap).rounded()))
+        let canvasHeight = max(1, Int((sourceHeight * outputScale * outputCap).rounded()))
+
+        // Model input: full resolution unless it exceeds the detail budget.
         let workingImage: UIImage
-        if finalPixels > maxSafeOutputPixels {
-            let scale = sqrt(maxSafeOutputPixels / finalPixels)
+        if sourcePixels > maxModelInputPixels {
+            let scale = sqrt(maxModelInputPixels / sourcePixels)
             let targetSize = CGSize(
-                width: (normalized.size.width * CGFloat(scale)).rounded(),
-                height: (normalized.size.height * CGFloat(scale)).rounded()
+                width: max(1, (sourceWidth * scale).rounded()),
+                height: max(1, (sourceHeight * scale).rounded())
             )
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
@@ -139,9 +163,20 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         }
 
         guard let workingCGImage = workingImage.cgImage else { throw UpscaleError.invalidImage }
-        let adaptive = Self.adaptiveTileSettings(for: workingImage.size, requestedOverlap: config.overlap)
-        let tiler = ImageTiler(tileSize: adaptive.tileSize, overlap: adaptive.overlap, scaleFactor: config.scaleFactor)
+        // Tile size must stay `config.tileSize`: it's the model's fixed,
+        // compiled input shape. (v3.26.17's area-adaptive 64/96px tiles
+        // would have been stretched to 128 by Vision's .scaleFill and then
+        // cropped with 64px-tile math — garbage output — had the input
+        // ever been large enough to trigger them.)
+        let tiler = ImageTiler(tileSize: config.tileSize, overlap: config.overlap, scaleFactor: config.scaleFactor)
         let plan = tiler.plan(imageWidth: workingCGImage.width, imageHeight: workingCGImage.height)
+
+        // Working-image pixel -> canvas pixel. Separate x/y factors so the
+        // last row/column lands exactly on the canvas edge after rounding.
+        let scaleX = Double(canvasWidth) / Double(workingCGImage.width)
+        let scaleY = Double(canvasHeight) / Double(workingCGImage.height)
+        let isNativeScale = abs(scaleX - Double(config.scaleFactor)) < 0.0001
+            && abs(scaleY - Double(config.scaleFactor)) < 0.0001
 
         // Keep a single canvas alive instead of storing every tile result in
         // memory until the end. Large/wide source photos can produce dozens of
@@ -149,8 +184,6 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         // big inputs. Drawing each tile directly into the final output keeps the
         // working set bounded by the current tile plus the final canvas, rather
         // than O(plan.tiles) full-frame images.
-        let canvasWidth = Int(max(1, plan.outputSize.width.rounded()))
-        let canvasHeight = Int(max(1, plan.outputSize.height.rounded()))
         let bytesPerPixel = 4
         guard let context = CGContext(
             data: nil,
@@ -164,7 +197,7 @@ final class CoreMLTileUpscaler: ImageUpscaling {
             throw UpscaleError.renderFailed
         }
         context.setAllowsAntialiasing(false)
-        context.interpolationQuality = .none
+        context.interpolationQuality = isNativeScale ? .none : .high
         // A raw CGContext is initialized with the Core Graphics default of
         // origin-at-lower-left, while the tiler and image-crop math in this
         // code base use ordinary UIKit/top-left y-down coordinates. Flip the
@@ -183,17 +216,33 @@ final class CoreMLTileUpscaler: ImageUpscaling {
             let inputTile = workingImage.croppedEdgeReplicated(to: tile.sourceRect)
             let outputTile = try await runModel(on: inputTile)
 
-            let keepScaled = CGRect(
-                x: tile.keepRect.origin.x * CGFloat(config.scaleFactor),
-                y: tile.keepRect.origin.y * CGFloat(config.scaleFactor),
-                width: tile.keepRect.width * CGFloat(config.scaleFactor),
-                height: tile.keepRect.height * CGFloat(config.scaleFactor)
+            // The whole model output tile (overlap context included) is
+            // drawn scaled into place and clipped to this tile's core
+            // region, so resampling at a non-native scale still has real
+            // neighboring pixels to filter from rather than a hard crop
+            // edge. Core edges are rounded once, from the same formula for
+            // both neighbors, so adjacent tiles abut with no gap/overlap.
+            let coreMinX = Double(tile.sourceRect.minX + tile.keepRect.minX)
+            let coreMinY = Double(tile.sourceRect.minY + tile.keepRect.minY)
+            let keepDest = CGRect(
+                x: (coreMinX * scaleX).rounded(),
+                y: (coreMinY * scaleY).rounded(),
+                width: ((coreMinX + Double(tile.keepRect.width)) * scaleX).rounded() - (coreMinX * scaleX).rounded(),
+                height: ((coreMinY + Double(tile.keepRect.height)) * scaleY).rounded() - (coreMinY * scaleY).rounded()
             )
-            let croppedOutput = outputTile.cropped(to: keepScaled)
+            let tileDest = CGRect(
+                x: Double(tile.sourceRect.minX) * scaleX,
+                y: Double(tile.sourceRect.minY) * scaleY,
+                width: Double(tile.sourceRect.width) * scaleX,
+                height: Double(tile.sourceRect.height) * scaleY
+            )
 
             autoreleasepool {
                 UIGraphicsPushContext(context)
-                croppedOutput.draw(at: tile.destOrigin)
+                context.saveGState()
+                context.clip(to: keepDest)
+                outputTile.draw(in: tileDest)
+                context.restoreGState()
                 UIGraphicsPopContext()
             }
             progress(Double(index + 1) / Double(plan.tiles.count))

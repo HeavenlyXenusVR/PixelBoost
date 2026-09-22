@@ -22,6 +22,10 @@ struct SettingsView: View {
                     modelRow
                     PBRowDivider()
                     scaleRow
+                    if provider.quality != .fast {
+                        PBRowDivider()
+                        detailRow
+                    }
                     if provider.quality == .custom {
                         PBRowDivider()
                         customOverlapRow
@@ -46,7 +50,7 @@ struct SettingsView: View {
                         loadingRow(text: "Loading model…")
                     }
                 }
-                PBFootnote(text: "Auto runs every bundled model on the whole photo and shows you all of them side by side to pick from — Batch Upscale (nobody's watching per photo there) still picks automatically via a quick sharpness test instead. Fast skips the model entirely (plain resampling, instant). Standard/Best trade speed for tile-seam quality; Custom hands you that same tile-overlap dial directly instead of a fixed preset. Output Scale always analyzes at each model's native 4x, then resizes down to your chosen size — 2x/3x still benefit from the model's full detail, not a shortcut. Upscale Strength blends the model's result with a plain resize — turn it down to dial back an over-aggressive or artifact-prone result without switching models. Anti-Aliasing adds a gentle smoothing pass to the final upscale to cut jagged edges without stopping you from sharpening afterward.")
+                PBFootnote(text: "Auto runs every bundled model on the whole photo and shows you all of them side by side to pick from — Batch Upscale (nobody's watching per photo there) still picks automatically via a quick sharpness test instead. Fast skips the model entirely (plain resampling, instant). Standard/Best trade speed for tile-seam quality; Custom hands you that same tile-overlap dial directly instead of a fixed preset. Output Scale always analyzes at each model's native 4x, then resizes down to your chosen size — 2x/3x still benefit from the model's full detail, not a shortcut. Detail sets how much of your photo's real resolution the model works from: the biggest lever on sharpness, and on time and heat. Upscale Strength blends the model's result with a plain resize — 100% is the model's full output, so turn it down only to dial back an over-aggressive or artifact-prone result. Anti-Aliasing (off by default) adds a gentle smoothing pass to cut jagged edges, at the cost of some sharpness.")
 
                 CustomPresetsCard()
                 ICloudPresetsCard()
@@ -278,6 +282,24 @@ struct SettingsView: View {
             PBCardRow(icon: "arrow.up.left.and.arrow.down.right", label: "Output Scale", value: "\(provider.scaleFactor.displayName) ›")
         }
         .buttonStyle(.plain)
+    }
+
+    private var detailRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Menu {
+                ForEach(UpscaleDetail.allCases) { level in
+                    Button(level.displayName) { provider.detail = level }
+                }
+            } label: {
+                PBCardRow(icon: "scope", label: "Detail", value: "\(provider.detail.displayName) ›")
+            }
+            .buttonStyle(.plain)
+            Text(provider.detail.footnote)
+                .font(.system(size: 12))
+                .foregroundStyle(PBColor.inkDim)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+        }
     }
 
     private var customOverlapRow: some View {

@@ -122,6 +122,45 @@ enum UpscaleQuality: String, CaseIterable, Identifiable {
     }
 }
 
+/// How much of the source photo's real resolution the model gets to see —
+/// the speed/heat vs. detail dial. Output size is set separately by
+/// `UpscaleFactor`; this only decides how many source pixels are actually
+/// run through the model to fill it. A 12MP phone photo keeps full
+/// resolution at `.maximum`, is lightly downscaled at `.high`, and more so
+/// at `.balanced` — every level still sees far more than the ~1MP the
+/// v3.26.13–v3.26.17 pipeline was feeding it.
+enum UpscaleDetail: String, CaseIterable, Identifiable {
+    case balanced
+    case high
+    case maximum
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .balanced: return "Balanced"
+        case .high: return "High"
+        case .maximum: return "Maximum"
+        }
+    }
+
+    var maxModelInputPixels: Double {
+        switch self {
+        case .balanced: return 4_000_000
+        case .high: return 8_000_000
+        case .maximum: return 16_000_000
+        }
+    }
+
+    var footnote: String {
+        switch self {
+        case .balanced: return "Model sees up to 4 MP of the photo. Fastest, coolest."
+        case .high: return "Model sees up to 8 MP. Sharper; about twice as long as Balanced."
+        case .maximum: return "Model sees up to 16 MP: full resolution for most phone photos. Sharpest, slowest, and the phone will get warm."
+        }
+    }
+}
+
 /// Final output size, as a multiple of the source photo's own dimensions.
 /// Independent of which model runs — see `ScaledOutputUpscaler` for how a
 /// model fixed at a 4x native scale still delivers 2x/3x output.
@@ -173,6 +212,7 @@ final class UpscalerProvider: ObservableObject {
     private static let customOverlapDefaultsKey = "com.pixelboost.customOverlap"
     private static let upscaleStrengthDefaultsKey = "com.pixelboost.upscaleStrength"
     private static let scaleFactorDefaultsKey = "com.pixelboost.scaleFactor"
+    private static let detailDefaultsKey = "com.pixelboost.detail"
     private static let exportFormatDefaultsKey = "com.pixelboost.exportFormat"
     private static let exportQualityDefaultsKey = "com.pixelboost.exportQuality"
     private static let denoiseBeforeUpscaleDefaultsKey = "com.pixelboost.denoiseBeforeUpscale"
@@ -224,6 +264,9 @@ final class UpscalerProvider: ObservableObject {
     }
     @Published var scaleFactor: UpscaleFactor {
         didSet { UserDefaults.standard.set(scaleFactor.rawValue, forKey: Self.scaleFactorDefaultsKey) }
+    }
+    @Published var detail: UpscaleDetail {
+        didSet { UserDefaults.standard.set(detail.rawValue, forKey: Self.detailDefaultsKey) }
     }
     @Published var exportFormat: ExportFormat {
         didSet { UserDefaults.standard.set(exportFormat.rawValue, forKey: Self.exportFormatDefaultsKey) }
@@ -351,13 +394,15 @@ final class UpscalerProvider: ObservableObject {
         upscaleStrength = storedUpscaleStrength ?? 1.0
         let storedScale = UserDefaults.standard.object(forKey: Self.scaleFactorDefaultsKey) as? Int
         scaleFactor = storedScale.flatMap(UpscaleFactor.init(rawValue:)) ?? .x4
+        detail = UserDefaults.standard.string(forKey: Self.detailDefaultsKey)
+            .flatMap(UpscaleDetail.init(rawValue:)) ?? .balanced
         exportFormat = UserDefaults.standard.string(forKey: Self.exportFormatDefaultsKey)
             .flatMap(ExportFormat.init(rawValue:)) ?? .auto
         let storedQuality = UserDefaults.standard.object(forKey: Self.exportQualityDefaultsKey) as? Double
         exportQuality = storedQuality ?? 0.9
         denoiseBeforeUpscale = UserDefaults.standard.bool(forKey: Self.denoiseBeforeUpscaleDefaultsKey)
         let storedAntiAliasing = UserDefaults.standard.object(forKey: Self.antiAliasingAmountDefaultsKey) as? Double
-        antiAliasingAmount = storedAntiAliasing ?? 0.35
+        antiAliasingAmount = storedAntiAliasing ?? 0
         let storedSharpen = UserDefaults.standard.object(forKey: Self.sharpenAmountDefaultsKey) as? Double
         sharpenAmount = storedSharpen ?? 0
         autoSaveEnabled = UserDefaults.standard.bool(forKey: Self.autoSaveEnabledDefaultsKey)
@@ -402,7 +447,7 @@ final class UpscalerProvider: ObservableObject {
         guard let base = await resolvedModel(for: choice, overlap: overlap) else {
             return LanczosUpscaler(scaleFactor: Double(scaleFactor.rawValue))
         }
-        return ScaledOutputUpscaler(base: base, nativeScale: 4, targetScale: scaleFactor.rawValue)
+        return ScaledOutputUpscaler(base: base, targetScale: scaleFactor.rawValue, maxModelInputPixels: detail.maxModelInputPixels)
     }
 
     /// Resolves every *actually bundled* real model at once, each wrapped
@@ -413,11 +458,15 @@ final class UpscalerProvider: ObservableObject {
     func resolveAllBundled() async -> [(choice: UpscaleModelChoice, upscaler: ImageUpscaling)] {
         guard let overlap = quality.overlap(customOverlap: customOverlap) else { return [] }
         let candidates = UpscaleModelChoice.allCases.filter { $0 != .auto && $0.isBundled }
+        // Every bundled model runs over the whole photo here, so cap the
+        // per-model cost at Balanced — Maximum across six models would be
+        // several minutes of sustained load for one comparison.
+        let compareInputPixels = min(detail.maxModelInputPixels, UpscaleDetail.balanced.maxModelInputPixels)
 
         var resolved: [(UpscaleModelChoice, ImageUpscaling)] = []
         for candidate in candidates {
             guard let base = await resolvedModel(for: candidate, overlap: overlap) else { continue }
-            resolved.append((candidate, ScaledOutputUpscaler(base: base, nativeScale: 4, targetScale: scaleFactor.rawValue)))
+            resolved.append((candidate, ScaledOutputUpscaler(base: base, targetScale: scaleFactor.rawValue, maxModelInputPixels: compareInputPixels)))
         }
         return resolved
     }
