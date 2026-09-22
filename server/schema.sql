@@ -157,15 +157,18 @@ CREATE TABLE IF NOT EXISTS model_registry (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- NOTE: no semicolons inside these string literals — db.py's init_db
+-- splits schema.sql on ';' (after stripping comments), so one inside a
+-- literal slices the statement in half and startup fails outright.
 INSERT INTO model_registry (model_name, display_name, description, license, tile_size, scale_factor, is_active) VALUES
     ('RealESRGAN', 'General Photo', 'Real-ESRGAN x4plus — general-purpose photo upscaling, 23 RRDB blocks.', 'BSD-3-Clause', 128, 4, TRUE),
     ('RealESRGANAnime', 'Anime / Illustration', 'Real-ESRGAN x4plus anime_6B — optimized for anime/illustration art, 6 RRDB blocks (faster).', 'BSD-3-Clause', 128, 4, TRUE),
     ('RealESRNet', 'Portrait', 'RealESRNet_x4plus — same architecture as x4plus, trained without GAN loss: smoother, fewer artifacts on skin.', 'BSD-3-Clause', 128, 4, TRUE),
     ('RealESRGeneralV3', 'Fast & Clean', 'realesr-general-x4v3 — SRVGGNetCompact, much smaller/faster than any RRDBNet model.', 'BSD-3-Clause', 128, 4, TRUE),
-    ('BSRGAN', '3D / CG Render', 'BSRGAN — trained on a harsher synthetic degradation pipeline; robust on renders and lossily-compressed source.', 'Apache-2.0', 128, 4, TRUE),
-    ('RealCUGAN', 'Toon / Cel-Shaded Render', 'Real-CUGAN up4x — U-Net trained on anime art; holds clean line structure on flat-shaded content.', 'MIT', 128, 4, TRUE),
+    ('BSRGAN', '3D / CG Render', 'BSRGAN — trained on a harsher synthetic degradation pipeline, robust on renders and lossily-compressed source.', 'Apache-2.0', 128, 4, TRUE),
+    ('RealCUGAN', 'Toon / Cel-Shaded Render', 'Real-CUGAN up4x — U-Net trained on anime art, holds clean line structure on flat-shaded content.', 'MIT', 128, 4, TRUE),
     ('RealESRGANx2', 'Native 2x', 'Real-ESRGAN x2plus — the only bundled model with a native 2x ratio, so a 2x request is produced directly instead of resampled down from 4x.', 'BSD-3-Clause', 128, 2, TRUE),
-    ('RealESRGANAnimeVideo', 'Anime Video / Line Art', 'realesr-animevideov3 — SRVGGNetCompact trained on anime video frames; light, tuned for compression artifacts and flat line work.', 'BSD-3-Clause', 128, 4, TRUE)
+    ('RealESRGANAnimeVideo', 'Anime Video / Line Art', 'realesr-animevideov3 — SRVGGNetCompact trained on anime video frames, light, tuned for compression artifacts and flat line work.', 'BSD-3-Clause', 128, 4, TRUE)
 ON CONFLICT (model_name) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     description = EXCLUDED.description,
