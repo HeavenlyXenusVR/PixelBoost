@@ -135,6 +135,36 @@ struct SettingsView: View {
                 }
                 PBFootnote(text: "Auto-Save saves a single-photo Upscale result the moment it finishes, no Save tap needed (Batch already always saves per photo). Auto Cloud Backup uploads every Upscale result and every tool's Apply result to the Upscaler-Bridge server below the moment it's produced, same expiring storage as the Cloud tab's manual backup button — off by default since it sends photo bytes to that server; needs a server URL configured to do anything. Preserve Original always adds a new photo instead of overwriting the one you picked, undoing the overwrite-by-default behavior everywhere else in the app. Add to PixelBoost Album also files every save into a \"PixelBoost\" album in Photos, created the first time it's needed, so edited photos are easy to find as a set.")
 
+                PBSectionLabel(title: "Temporary Cloud Save")
+                PBCard {
+                    Toggle(isOn: $provider.temporaryCloudSaveEnabled) {
+                        Text("Keep Results for a Day")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(PBColor.ink)
+                    }
+                    .tint(PBColor.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    if provider.temporaryCloudSaveEnabled {
+                        PBRowDivider()
+                        temporaryTTLRow
+                    }
+                }
+                PBFootnote(text: "Keeps a copy of each upscale result on the Upscaler-Bridge server for \(provider.temporaryCloudTTLHours) hours, then the server deletes it automatically — so a result you didn't save is still recoverable from the Cloud tab for a while. Only the result, never the original photo (that's Auto Cloud Backup above). Needs a server URL configured; nothing is uploaded without one.")
+
+                PBSectionLabel(title: "Diagnostics")
+                PBCard {
+                    Toggle(isOn: $provider.diagnosticsEnabled) {
+                        Text("Send Diagnostics")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(PBColor.ink)
+                    }
+                    .tint(PBColor.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                }
+                PBFootnote(text: "Records what each upscale actually did — model, detail level, the resolution the model really saw, timing, thermal state, memory — plus which tools you use and any errors, to the server below. No photo content, just numbers and setting names. Turning this off stops every event, snapshot and upscale log the app sends.")
+
                 PBSectionLabel(title: "Appearance")
                 PBCard {
                     accentThemeRow
@@ -240,7 +270,6 @@ struct SettingsView: View {
             ForEach(UpscaleQuality.allCases) { quality in
                 Button(quality.displayName) {
                     provider.quality = quality
-                    ActionLoggingService.log("settings_change", detail: ["setting": "quality", "value": quality.displayName])
                 }
             }
         } label: {
@@ -282,6 +311,30 @@ struct SettingsView: View {
             PBCardRow(icon: "arrow.up.left.and.arrow.down.right", label: "Output Scale", value: "\(provider.scaleFactor.displayName) ›")
         }
         .buttonStyle(.plain)
+    }
+
+    private var temporaryTTLRow: some View {
+        Menu {
+            ForEach([6, 12, 24, 48, 72, 168], id: \.self) { hours in
+                Button(Self.ttlLabel(hours)) { provider.temporaryCloudTTLHours = hours }
+            }
+        } label: {
+            PBCardRow(
+                icon: "clock.arrow.circlepath", label: "Keep For",
+                value: "\(Self.ttlLabel(provider.temporaryCloudTTLHours)) ›"
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private static func ttlLabel(_ hours: Int) -> String {
+        switch hours {
+        case 24: return "1 day"
+        case 48: return "2 days"
+        case 72: return "3 days"
+        case 168: return "7 days"
+        default: return "\(hours) hours"
+        }
     }
 
     private var detailRow: some View {

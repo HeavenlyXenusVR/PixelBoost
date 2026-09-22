@@ -161,3 +161,80 @@ INSERT INTO model_registry (model_name, display_name, description, license, tile
     ('RealESRGAN', 'General Photo', 'Real-ESRGAN x4plus — general-purpose photo upscaling, 23 RRDB blocks.', 'BSD-3-Clause', 128, 4, TRUE),
     ('RealESRGANAnime', 'Anime / Illustration', 'Real-ESRGAN x4plus anime_6B — optimized for anime/illustration art, 6 RRDB blocks (faster).', 'BSD-3-Clause', 128, 4, TRUE)
 ON CONFLICT (model_name) DO UPDATE SET display_name = EXCLUDED.display_name;
+
+-- ---------------------------------------------------------------------------
+-- Telemetry (added 2026-09-22)
+-- ---------------------------------------------------------------------------
+--
+-- Run-context columns on upscale_history. The v3.26.13-v3.26.17 "weak
+-- upscale" regression (an output pixel budget being applied to the model's
+-- *input*, so a 12MP photo reached the model at ~1MP) was invisible in this
+-- log: source/output dimensions both looked right, because the shrink
+-- happened in between. model_input_width/height record what the model
+-- actually saw, which is the number that would have shown it immediately.
+-- Thermal/memory columns are here for the other half of that story — the
+-- regression was introduced as a thermal fix, with no data on whether
+-- thermal pressure was actually occurring.
+--
+-- ADD COLUMN IF NOT EXISTS, not a new table: this file is re-run on every
+-- boot (see db.py's init_db) against a live database with existing rows.
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS session_id VARCHAR(36);
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS detail_level VARCHAR(20);
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS model_input_width INT;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS model_input_height INT;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS requested_scale INT;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS upscale_strength REAL;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS anti_aliasing REAL;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS sharpen REAL;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS denoise_before BOOLEAN;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS was_batch BOOLEAN;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS cancelled BOOLEAN;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS thermal_state_start VARCHAR(20);
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS thermal_state_end VARCHAR(20);
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS low_power_mode BOOLEAN;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS battery_level REAL;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS physical_memory_mb INT;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS peak_memory_mb INT;
+CREATE INDEX IF NOT EXISTS idx_history_model_detail ON upscale_history (model_name, detail_level, created_at);
+
+-- Same idea for the action log: which session an action belongs to, how it
+-- turned out, and how long it took, without having to parse them back out
+-- of the free-form `detail` JSON every time.
+ALTER TABLE action_log ADD COLUMN IF NOT EXISTS session_id VARCHAR(36);
+ALTER TABLE action_log ADD COLUMN IF NOT EXISTS outcome VARCHAR(30);
+ALTER TABLE action_log ADD COLUMN IF NOT EXISTS duration_ms INT;
+ALTER TABLE action_log ADD COLUMN IF NOT EXISTS thermal_state VARCHAR(20);
+CREATE INDEX IF NOT EXISTS idx_action_name ON action_log (action, created_at);
+
+-- Ambient device telemetry, sampled periodically and at app
+-- foreground/background rather than tied to any one action — the "was the
+-- phone already hot / low on memory / in Low Power Mode when this happened"
+-- context that no per-action log can supply on its own.
+CREATE TABLE IF NOT EXISTS device_snapshots (
+    id VARCHAR(36) PRIMARY KEY,
+    device_id VARCHAR(64) NOT NULL,
+    session_id VARCHAR(36),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reason VARCHAR(30),
+    thermal_state VARCHAR(20),
+    low_power_mode BOOLEAN,
+    battery_level REAL,
+    battery_state VARCHAR(20),
+    physical_memory_mb INT,
+    used_memory_mb INT,
+    free_disk_mb INT,
+    session_uptime_s INT,
+    app_version VARCHAR(20),
+    os_version VARCHAR(20),
+    device_model VARCHAR(50)
+);
+CREATE INDEX IF NOT EXISTS idx_device_snapshots ON device_snapshots (device_id, created_at);
+
+-- Temporary export storage: which uploads were automatic (every result,
+-- when Temporary Cloud Save is on) vs. a deliberate one-off, so the two
+-- can be told apart when reasoning about storage use. Expiry itself is
+-- unchanged — expires_at + the cleanup loop already handle it.
+ALTER TABLE image_exports ADD COLUMN IF NOT EXISTS is_auto BOOLEAN DEFAULT FALSE;
+ALTER TABLE image_exports ADD COLUMN IF NOT EXISTS label VARCHAR(120);
+ALTER TABLE image_imports ADD COLUMN IF NOT EXISTS is_auto BOOLEAN DEFAULT FALSE;
+ALTER TABLE image_imports ADD COLUMN IF NOT EXISTS label VARCHAR(120);

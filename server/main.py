@@ -123,6 +123,28 @@ class UpscaleLogEntry(BaseModel):
     app_version: Optional[str] = None
     os_version: Optional[str] = None
     device_model: Optional[str] = None
+    # Run context (added 2026-09-22). All optional so an older app build's
+    # payload still posts cleanly against this server.
+    session_id: Optional[str] = None
+    detail_level: Optional[str] = None
+    # What the model actually saw, after any detail-budget downscale — the
+    # column that makes a "weak upscale" regression visible in the log
+    # instead of invisible between source_* and output_*.
+    model_input_width: Optional[int] = None
+    model_input_height: Optional[int] = None
+    requested_scale: Optional[int] = None
+    upscale_strength: Optional[float] = None
+    anti_aliasing: Optional[float] = None
+    sharpen: Optional[float] = None
+    denoise_before: Optional[bool] = None
+    was_batch: Optional[bool] = None
+    cancelled: Optional[bool] = None
+    thermal_state_start: Optional[str] = None
+    thermal_state_end: Optional[str] = None
+    low_power_mode: Optional[bool] = None
+    battery_level: Optional[float] = None
+    physical_memory_mb: Optional[int] = None
+    peak_memory_mb: Optional[int] = None
 
 
 @app.get("/health")
@@ -143,11 +165,21 @@ async def log_upscale(entry: UpscaleLogEntry, request: Request):
                     id, device_id, source_width, source_height, source_file_size_bytes,
                     technique, model_name, tile_size, overlap, scale_factor, tile_count,
                     output_width, output_height, processing_ms, success, error_message,
-                    app_version, os_version, device_model
+                    app_version, os_version, device_model,
+                    session_id, detail_level, model_input_width, model_input_height,
+                    requested_scale, upscale_strength, anti_aliasing, sharpen,
+                    denoise_before, was_batch, cancelled,
+                    thermal_state_start, thermal_state_end, low_power_mode,
+                    battery_level, physical_memory_mb, peak_memory_mb
                 ) VALUES (
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
                     %s, %s, %s
                 )
                 """,
@@ -159,6 +191,14 @@ async def log_upscale(entry: UpscaleLogEntry, request: Request):
                     entry.output_width, entry.output_height, entry.processing_ms,
                     entry.success, entry.error_message,
                     entry.app_version, entry.os_version, entry.device_model,
+                    entry.session_id, entry.detail_level,
+                    entry.model_input_width, entry.model_input_height,
+                    entry.requested_scale, entry.upscale_strength,
+                    entry.anti_aliasing, entry.sharpen,
+                    entry.denoise_before, entry.was_batch, entry.cancelled,
+                    entry.thermal_state_start, entry.thermal_state_end,
+                    entry.low_power_mode, entry.battery_level,
+                    entry.physical_memory_mb, entry.peak_memory_mb,
                 ),
             )
     return {"id": entry_id}
@@ -235,6 +275,33 @@ class ActionLogEntry(BaseModel):
     app_version: Optional[str] = None
     os_version: Optional[str] = None
     device_model: Optional[str] = None
+    session_id: Optional[str] = None
+    outcome: Optional[str] = None
+    duration_ms: Optional[int] = None
+    thermal_state: Optional[str] = None
+
+
+class ActionLogBatch(BaseModel):
+    """The app buffers events and flushes them together (see iOS
+    TelemetryService) — with telemetry on every tool and control, one HTTP
+    request per tap would be a lot of radio wake-ups for a debug log."""
+    entries: list[ActionLogEntry]
+
+
+_ACTION_INSERT_SQL = """
+    INSERT INTO action_log (
+        id, device_id, action, detail, app_version, os_version, device_model,
+        session_id, outcome, duration_ms, thermal_state
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+
+def _action_values(entry_id: str, entry: ActionLogEntry) -> tuple:
+    return (
+        entry_id, entry.device_id, entry.action, entry.detail,
+        entry.app_version, entry.os_version, entry.device_model,
+        entry.session_id, entry.outcome, entry.duration_ms, entry.thermal_state,
+    )
 
 
 @app.post("/log/action")
@@ -244,18 +311,26 @@ async def log_action(entry: ActionLogEntry, request: Request):
     entry_id = uuid.uuid4().hex
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                INSERT INTO action_log (
-                    id, device_id, action, detail, app_version, os_version, device_model
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    entry_id, entry.device_id, entry.action, entry.detail,
-                    entry.app_version, entry.os_version, entry.device_model,
-                ),
-            )
+            await cur.execute(_ACTION_INSERT_SQL, _action_values(entry_id, entry))
     return {"id": entry_id}
+
+
+@app.post("/log/actions")
+async def log_actions(batch: ActionLogBatch, request: Request):
+    """Batched counterpart to POST /log/action. Capped so one malformed or
+    runaway client can't post an unbounded insert in a single request."""
+    await check_auth(request)
+    if not batch.entries:
+        return {"ids": []}
+    if len(batch.entries) > 200:
+        raise HTTPException(status_code=413, detail="At most 200 entries per batch")
+    pool = await get_pool()
+    ids = [uuid.uuid4().hex for _ in batch.entries]
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for entry_id, entry in zip(ids, batch.entries):
+                await cur.execute(_ACTION_INSERT_SQL, _action_values(entry_id, entry))
+    return {"ids": ids}
 
 
 @app.get("/log/action-history")
@@ -282,13 +357,83 @@ async def get_action_history(
         async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 f"""
-                SELECT id, device_id, action, detail, created_at, app_version, os_version, device_model
+                SELECT id, device_id, action, detail, created_at, app_version, os_version,
+                       device_model, session_id, outcome, duration_ms, thermal_state
                 FROM action_log
                 {where}
                 ORDER BY created_at DESC
                 LIMIT %s OFFSET %s
                 """,
                 tuple(params),
+            )
+            rows = await cur.fetchall()
+    return {"entries": rows}
+
+
+class DeviceSnapshot(BaseModel):
+    """Ambient device state, sampled on a timer and at foreground/background
+    — the context ("was the phone already hot, low on memory, in Low Power
+    Mode") that a per-action log can't supply by itself."""
+    device_id: str
+    session_id: Optional[str] = None
+    reason: Optional[str] = None
+    thermal_state: Optional[str] = None
+    low_power_mode: Optional[bool] = None
+    battery_level: Optional[float] = None
+    battery_state: Optional[str] = None
+    physical_memory_mb: Optional[int] = None
+    used_memory_mb: Optional[int] = None
+    free_disk_mb: Optional[int] = None
+    session_uptime_s: Optional[int] = None
+    app_version: Optional[str] = None
+    os_version: Optional[str] = None
+    device_model: Optional[str] = None
+
+
+@app.post("/log/snapshot")
+async def log_snapshot(snapshot: DeviceSnapshot, request: Request):
+    await check_auth(request)
+    pool = await get_pool()
+    entry_id = uuid.uuid4().hex
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                INSERT INTO device_snapshots (
+                    id, device_id, session_id, reason, thermal_state, low_power_mode,
+                    battery_level, battery_state, physical_memory_mb, used_memory_mb,
+                    free_disk_mb, session_uptime_s, app_version, os_version, device_model
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    entry_id, snapshot.device_id, snapshot.session_id, snapshot.reason,
+                    snapshot.thermal_state, snapshot.low_power_mode,
+                    snapshot.battery_level, snapshot.battery_state,
+                    snapshot.physical_memory_mb, snapshot.used_memory_mb,
+                    snapshot.free_disk_mb, snapshot.session_uptime_s,
+                    snapshot.app_version, snapshot.os_version, snapshot.device_model,
+                ),
+            )
+    return {"id": entry_id}
+
+
+@app.get("/log/snapshots")
+async def get_snapshots(
+    request: Request,
+    device_id: str = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    await check_auth(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            await cur.execute(
+                """
+                SELECT * FROM device_snapshots WHERE device_id = %s
+                ORDER BY created_at DESC LIMIT %s OFFSET %s
+                """,
+                (device_id, limit, offset),
             )
             rows = await cur.fetchall()
     return {"entries": rows}
@@ -384,7 +529,10 @@ async def _create_stored_image(
             )
     # Best-effort — never let a cleanup hiccup fail the upload it rode in on.
     asyncio.create_task(_cleanup_expired_once())
-    return {"id": entry_id, "expires_in_hours": hours, "width": width, "height": height}
+    return {
+        "id": entry_id, "expires_in_hours": hours,
+        "width": width, "height": height, "file_size_bytes": len(data),
+    }
 
 
 async def _get_stored_image(table: str, item_id: str) -> Response:
@@ -407,7 +555,8 @@ async def _list_stored_images(table: str, device_id: str) -> dict:
         async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             await cur.execute(
                 f"""
-                SELECT id, device_id, created_at, expires_at, filename, content_type, width, height, file_size_bytes
+                SELECT id, device_id, created_at, expires_at, filename, content_type,
+                       width, height, file_size_bytes, is_auto, label
                 FROM {table} WHERE device_id = %s AND expires_at > NOW()
                 ORDER BY created_at DESC
                 """,
@@ -433,10 +582,15 @@ async def create_import(
     request: Request,
     device_id: str = Form(...),
     ttl_hours: Optional[int] = Form(None),
+    is_auto: bool = Form(False),
+    label: Optional[str] = Form(None),
     file: UploadFile = File(...),
 ):
     await check_auth(request)
-    return await _create_stored_image("image_imports", device_id, file, ttl_hours, "image/jpeg", {})
+    extra: dict = {"is_auto": is_auto}
+    if label:
+        extra["label"] = label[:120]
+    return await _create_stored_image("image_imports", device_id, file, ttl_hours, "image/jpeg", extra)
 
 
 @app.get("/import/{import_id}")
@@ -457,18 +611,73 @@ async def delete_import(import_id: str, request: Request):
     return await _delete_stored_image("image_imports", import_id)
 
 
+@app.get("/storage/usage")
+async def storage_usage(request: Request, device_id: str = Query(...)):
+    """What this device currently has parked in temporary storage, and when
+    the oldest of it expires — so the app can show real numbers instead of
+    "some files, at some point" on a screen whose whole premise is that
+    everything on it is about to be deleted."""
+    await check_auth(request)
+    pool = await get_pool()
+    result = {}
+    async with pool.acquire() as conn:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            for table, key in (("image_imports", "imports"), ("image_exports", "exports")):
+                await cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS count,
+                           COALESCE(SUM(file_size_bytes), 0) AS total_bytes,
+                           MIN(expires_at) AS next_expiry
+                    FROM {table} WHERE device_id = %s AND expires_at > NOW()
+                    """,
+                    (device_id,),
+                )
+                result[key] = await cur.fetchone()
+    return result
+
+
+@app.delete("/export")
+async def clear_exports(request: Request, device_id: str = Query(...)):
+    """Delete this device's temporary results now rather than waiting for
+    them to expire."""
+    await check_auth(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM image_exports WHERE device_id = %s", (device_id,))
+            deleted = cur.rowcount
+    return {"deleted": deleted}
+
+
+@app.delete("/import")
+async def clear_imports(request: Request, device_id: str = Query(...)):
+    await check_auth(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM image_imports WHERE device_id = %s", (device_id,))
+            deleted = cur.rowcount
+    return {"deleted": deleted}
+
+
 @app.post("/export")
 async def create_export(
     request: Request,
     device_id: str = Form(...),
     history_id: Optional[str] = Form(None),
     ttl_hours: Optional[int] = Form(None),
+    is_auto: bool = Form(False),
+    label: Optional[str] = Form(None),
     file: UploadFile = File(...),
 ):
     await check_auth(request)
+    extra: dict = {"is_auto": is_auto}
+    if history_id:
+        extra["history_id"] = history_id
+    if label:
+        extra["label"] = label[:120]
     return await _create_stored_image(
-        "image_exports", device_id, file, ttl_hours, "image/png",
-        {"history_id": history_id} if history_id else {},
+        "image_exports", device_id, file, ttl_hours, "image/png", extra,
     )
 
 

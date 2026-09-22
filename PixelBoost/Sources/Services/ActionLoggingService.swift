@@ -1,50 +1,60 @@
 import Foundation
 import UIKit
 
-/// Posts `ActionLogEntry` records to a deployed `upscaler-bridge` (see
-/// server/README.md) — the general-purpose counterpart to
-/// `UpscaleLoggingService` for actions that aren't a full upscale attempt.
-/// Fire-and-forget by design, same reasoning as `UpscaleLoggingService`: a
-/// logging failure must never surface to the user or block the action it's
-/// describing.
+/// Records `ActionLogEntry` records for anything that isn't a full upscale
+/// attempt — the general-purpose counterpart to `UpscaleLoggingService`.
+///
+/// Since 3.27.0 this is a thin front end over `TelemetryService`, which
+/// buffers events and flushes them in batches (`POST /log/actions`), tags
+/// each with the session id and current thermal state, and honors the
+/// Diagnostics switch in Settings. The `log(_:detail:)` shape is kept
+/// as-is so existing call sites don't all have to change; `outcome`/
+/// `durationMS` are optional additions that land in their own columns
+/// instead of being buried in `detail` JSON.
+///
+/// Fire-and-forget by design: a logging failure must never surface to the
+/// user or block the action it's describing.
 enum ActionLoggingService {
     /// - Parameter detail: encoded as a JSON object string server-side;
     ///   values should be JSON-serializable (`String`, `Bool`, `Int`,
     ///   `Double`, or `nil`).
-    static func log(_ action: String, detail: [String: Any?] = [:]) {
-        guard ServerConfig.baseURL != nil else { return }
-        Task.detached(priority: .background) {
-            do {
-                let entry = ActionLogEntry(
-                    device_id: DeviceIdentity.current,
-                    action: action,
-                    detail: Self.encodeDetail(detail),
-                    app_version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-                    os_version: UIDevice.current.systemVersion,
-                    device_model: UIDevice.current.model
-                )
-                var request = try APIClient.request(path: "log/action", method: "POST")
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONEncoder().encode(entry)
-                _ = try await APIClient.data(for: request)
-            } catch {
-                print("ActionLoggingService: failed to log action '\(action)' — \(error.localizedDescription)")
-            }
-        }
+    static func log(
+        _ action: String,
+        detail: [String: Any?] = [:],
+        outcome: String? = nil,
+        durationMS: Int? = nil
+    ) {
+        TelemetryService.record(action, detail: detail, outcome: outcome, durationMS: durationMS)
     }
 
-    private static func encodeDetail(_ detail: [String: Any?]) -> String? {
-        guard !detail.isEmpty else { return nil }
-        // NSNull for nil values — JSONSerialization drops entries whose
-        // value is Swift's `nil` outright rather than encoding `null`, and
-        // "this key was absent" vs "this key was explicitly nil" is a real
-        // distinction worth keeping in a debug log (e.g. a save's `reason`
-        // being nil means overwrite fully succeeded, not "unknown").
-        let normalized = detail.mapValues { $0 ?? NSNull() }
-        guard JSONSerialization.isValidJSONObject(normalized),
-              let data = try? JSONSerialization.data(withJSONObject: normalized) else {
-            return nil
+    /// Convenience for the very common "this tool ran and either worked or
+    /// threw" shape, so each call site doesn't re-spell it.
+    static func logResult(
+        _ action: String,
+        error: Error?,
+        detail: [String: Any?] = [:],
+        durationMS: Int? = nil
+    ) {
+        var merged = detail
+        if let error { merged["error"] = error.localizedDescription }
+        log(action, detail: merged, outcome: error == nil ? "success" : "failed", durationMS: durationMS)
+    }
+
+    /// Times `work`, records it, and re-throws anything it throws — the
+    /// wrapper for tool applies, where duration is as interesting as
+    /// outcome.
+    @discardableResult
+    static func timed<T>(_ action: String, detail: [String: Any?] = [:], work: () throws -> T) rethrows -> T {
+        let startedAt = Date()
+        do {
+            let value = try work()
+            log(action, detail: detail, outcome: "success", durationMS: Int(Date().timeIntervalSince(startedAt) * 1000))
+            return value
+        } catch {
+            var merged = detail
+            merged["error"] = error.localizedDescription
+            log(action, detail: merged, outcome: "failed", durationMS: Int(Date().timeIntervalSince(startedAt) * 1000))
+            throw error
         }
-        return String(data: data, encoding: .utf8)
     }
 }

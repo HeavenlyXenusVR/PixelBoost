@@ -249,9 +249,13 @@ struct CloneStampView: View {
                 let result = try await CloneStampService.apply(baseImage, maskImage: mask, offset: pixelOffset)
                 Haptics.success()
                 viewModel.resultImage = result
+                ActionLoggingService.log("clone_stamp_apply", detail: ["strokes": strokes.count], outcome: "success")
             } catch {
                 errorMessage = error.localizedDescription
                 Haptics.error()
+                ActionLoggingService.log("clone_stamp_apply", detail: [
+                    "strokes": strokes.count, "error": error.localizedDescription,
+                ], outcome: "failed")
             }
             isProcessing = false
         }

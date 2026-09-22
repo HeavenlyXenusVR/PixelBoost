@@ -293,8 +293,15 @@ struct PixelArtView: View {
             }
         }
 
-        guard let result = PixelArtService.apply(to: base, options: options(usingChromaKeyFallback: useChromaKeyFallback)) else { return }
+        guard let result = PixelArtService.apply(to: base, options: options(usingChromaKeyFallback: useChromaKeyFallback)) else {
+            ActionLoggingService.log("pixel_art_apply", outcome: "failed")
+            return
+        }
         viewModel.resultImage = result
+        ActionLoggingService.log("pixel_art_apply", detail: [
+            "transparent_background": transparentBackground,
+            "chroma_key_fallback": useChromaKeyFallback,
+        ], outcome: "success")
     }
 
     /// `usingChromaKeyFallback` is true only when Transparent Background is

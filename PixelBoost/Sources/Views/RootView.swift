@@ -26,6 +26,15 @@ struct RootView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomBar
         }
+        // Every tab stays mounted (see the ZStack above), so there's no
+        // per-screen .onAppear to hang this off — the selection change
+        // itself is the navigation event.
+        .onChange(of: selectedTab) { previous, tab in
+            ActionLoggingService.log("tab_change", detail: [
+                "from": previous.rawValue, "to": tab.rawValue,
+                "via": showingToolsDrawer ? "drawer" : "tab_bar",
+            ])
+        }
         .preferredColorScheme(.dark)
         .onAppear {
             // Applied once, at launch, before any tab switching — a

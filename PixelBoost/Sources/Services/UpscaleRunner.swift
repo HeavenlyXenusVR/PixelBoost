@@ -54,9 +54,24 @@ enum UpscaleRunner {
         sharpenAmount: Double = 0,
         autoRenderDenoise: Bool = false,
         blendAmount: Double = 1.0,
+        detailLevel: String? = nil,
+        requestedScale: Int? = nil,
+        isBatch: Bool = false,
         progress: @escaping (Double) -> Void
     ) async -> Outcome {
         let startedAt = Date()
+        // Captured before the run so the log can show whether the phone was
+        // *already* hot going in, as opposed to having been heated by this
+        // run — the distinction the v3.26.17 thermal change was made
+        // without any data on.
+        let thermalStateStart = TelemetryService.thermalStateName
+        let context = TelemetryService.context
+        let settings = RunSettings(
+            detailLevel: detailLevel, requestedScale: requestedScale,
+            strength: blendAmount, antiAliasing: antiAliasingAmount,
+            sharpen: sharpenAmount, denoiseBefore: denoiseAmount > 0 || autoRenderDenoise,
+            isBatch: isBatch, thermalStateStart: thermalStateStart, context: context
+        )
         var upscalerInput = denoiseAmount > 0 ? RestoreService.denoise(sourceImage, amount: denoiseAmount) : sourceImage
         if autoRenderDenoise {
             upscalerInput = (try? await RenderDenoiseService.denoise(upscalerInput) { _ in }) ?? upscalerInput
@@ -67,14 +82,21 @@ enum UpscaleRunner {
                 result = await blended(result, sourceImage: sourceImage, upscaler: upscaler, amount: blendAmount) ?? result
             }
             if antiAliasingAmount > 0 {
-                result = UpscaleResult(image: ImageTransform.antiAliased(result.image, amount: antiAliasingAmount), tileCount: result.tileCount)
+                result = UpscaleResult(
+                    image: ImageTransform.antiAliased(result.image, amount: antiAliasingAmount),
+                    tileCount: result.tileCount, modelInputSize: result.modelInputSize
+                )
             }
             if sharpenAmount > 0 {
-                result = UpscaleResult(image: PostSharpen.apply(result.image, amount: sharpenAmount), tileCount: result.tileCount)
+                result = UpscaleResult(
+                    image: PostSharpen.apply(result.image, amount: sharpenAmount),
+                    tileCount: result.tileCount, modelInputSize: result.modelInputSize
+                )
             }
             log(
                 upscaler: upscaler, sourceImage: sourceImage, sourceFileSizeBytes: sourceFileSizeBytes,
-                outputImage: result.image, tileCount: result.tileCount, startedAt: startedAt, error: nil
+                outputImage: result.image, tileCount: result.tileCount, startedAt: startedAt, error: nil,
+                modelInputSize: result.modelInputSize, settings: settings
             )
             // Feeds the Home Screen widget (see UpscaleSnapshot) — every
             // successful run through this shared function, single-image or
@@ -84,7 +106,8 @@ enum UpscaleRunner {
         } catch {
             log(
                 upscaler: upscaler, sourceImage: sourceImage, sourceFileSizeBytes: sourceFileSizeBytes,
-                outputImage: nil, tileCount: nil, startedAt: startedAt, error: error
+                outputImage: nil, tileCount: nil, startedAt: startedAt, error: error,
+                modelInputSize: nil, settings: settings
             )
             return Outcome(result: nil, error: error)
         }
@@ -107,7 +130,7 @@ enum UpscaleRunner {
               let fallback = try? await LanczosUpscaler(scaleFactor: scale).upscale(sourceImage, progress: { _ in }),
               let blendedImage = crossDissolve(result.image, fallback.image, amount: amount)
         else { return nil }
-        return UpscaleResult(image: blendedImage, tileCount: result.tileCount)
+        return UpscaleResult(image: blendedImage, tileCount: result.tileCount, modelInputSize: result.modelInputSize)
     }
 
     private static let blendContext = CIContext()
@@ -138,9 +161,25 @@ enum UpscaleRunner {
         return UIImage(cgImage: rendered, scale: 1, orientation: .up)
     }
 
+    /// The run's own configuration plus the device context it started in —
+    /// bundled rather than threaded through `log` as a dozen loose
+    /// parameters.
+    private struct RunSettings {
+        let detailLevel: String?
+        let requestedScale: Int?
+        let strength: Double
+        let antiAliasing: Double
+        let sharpen: Double
+        let denoiseBefore: Bool
+        let isBatch: Bool
+        let thermalStateStart: String
+        let context: TelemetryService.Context
+    }
+
     private static func log(
         upscaler: ImageUpscaling, sourceImage: UIImage, sourceFileSizeBytes: Int?,
-        outputImage: UIImage?, tileCount: Int?, startedAt: Date, error: Error?
+        outputImage: UIImage?, tileCount: Int?, startedAt: Date, error: Error?,
+        modelInputSize: CGSize?, settings: RunSettings
     ) {
         let info = upscaler.techniqueInfo
         let entry = UpscaleLogEntry(
@@ -161,34 +200,69 @@ enum UpscaleRunner {
             error_message: error?.localizedDescription,
             app_version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
             os_version: UIDevice.current.systemVersion,
-            device_model: UIDevice.current.model
+            device_model: UIDevice.current.model,
+            detail_level: settings.detailLevel,
+            model_input_width: modelInputSize.map { Int($0.width) },
+            model_input_height: modelInputSize.map { Int($0.height) },
+            requested_scale: settings.requestedScale,
+            upscale_strength: settings.strength,
+            anti_aliasing: settings.antiAliasing,
+            sharpen: settings.sharpen,
+            denoise_before: settings.denoiseBefore,
+            was_batch: settings.isBatch,
+            cancelled: error is CancellationError,
+            thermal_state_start: settings.thermalStateStart,
+            thermal_state_end: TelemetryService.thermalStateName,
+            low_power_mode: settings.context.lowPowerMode,
+            battery_level: settings.context.batteryLevel,
+            physical_memory_mb: settings.context.physicalMemoryMB,
+            peak_memory_mb: TelemetryService.usedMemoryMB
         )
-        // Metadata (timing/dimensions/success) always gets logged — that's
-        // the always-on debug telemetry described in the README. The image
-        // bytes themselves are a separate, opt-in concern (Settings' "Auto
-        // Cloud Backup") gated here on autoCloudBackupEnabledDefaultsKey:
-        // UpscaleRunner has no UpscalerProvider instance to read the
-        // published property from directly, so it reads the same
-        // UserDefaults key the property mirrors. When on, this uploads the
-        // source/result pair to the same expiring scratch storage the
-        // manual "Cloud Backup" button uses (see ImportExportService) —
-        // tied together via history_id so a model's actual input/output
-        // can be inspected server-side, not just the dimensions/timing
-        // metadata above. Every upload here is still TTL'd (default 24h,
-        // see server/README.md), not permanent retention.
+        // Metadata (timing/dimensions/success) is the always-on debug
+        // telemetry described in the README — off only if the user turns
+        // Diagnostics off in Settings (see TelemetryService.isEnabled).
+        //
+        // The image bytes themselves are two separate, independently
+        // switchable concerns, both read here from UserDefaults rather than
+        // an UpscalerProvider instance (UpscaleRunner has none to read the
+        // published properties from):
+        //
+        // 1. Temporary Cloud Save — keeps a copy of the *result* on the
+        //    server for a day (the TTL is a setting) so it can be re-fetched
+        //    from the Cloud tab or another device without re-running the
+        //    model. Uploaded with is_auto so an automatic copy can be told
+        //    apart from a deliberate one-off.
+        // 2. Auto Cloud Backup — the older, broader opt-in: uploads the
+        //    *source* photo as well.
+        //
+        // Neither is permanent: every row carries expires_at and the server
+        // deletes it on expiry (see server/README.md's Expiry section).
+        let temporarySaveEnabled = UpscalerProvider.storedTemporaryCloudSaveEnabled
+        let temporaryTTLHours = UpscalerProvider.storedTemporaryCloudTTLHours
         let autoCloudBackupEnabled = UserDefaults.standard.bool(forKey: UpscalerProvider.autoCloudBackupEnabledDefaultsKey)
+        let uploadLabel = [info.modelName, settings.requestedScale.map { "\($0)x" }, settings.detailLevel]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+        guard TelemetryService.isEnabled || temporarySaveEnabled || autoCloudBackupEnabled else { return }
         Task.detached(priority: .background) {
-            let historyID = await UpscaleLoggingService.log(entry)
-            guard autoCloudBackupEnabled, let historyID else { return }
+            let historyID = TelemetryService.isEnabled ? await UpscaleLoggingService.log(entry) : nil
+            guard let outputImage, temporarySaveEnabled || autoCloudBackupEnabled else { return }
             // Independent, best-effort attempts (a failed source upload
             // shouldn't skip the arguably-more-important result upload) —
             // whichever fails last just wins the status banner, which is
             // fine for a lightweight "something's not getting backed up"
             // signal rather than a precise per-upload report.
             var lastError: Error?
-            do { try await ImportExportService.upload(sourceImage, kind: .imports) } catch { lastError = error }
-            if let outputImage {
-                do { try await ImportExportService.upload(outputImage, kind: .exports, historyID: historyID) } catch { lastError = error }
+            if autoCloudBackupEnabled {
+                do { try await ImportExportService.upload(sourceImage, kind: .imports, isAuto: true) } catch { lastError = error }
+            }
+            if temporarySaveEnabled || autoCloudBackupEnabled {
+                do {
+                    try await ImportExportService.upload(
+                        outputImage, kind: .exports, historyID: historyID,
+                        ttlHours: temporaryTTLHours, isAuto: true, label: uploadLabel
+                    )
+                } catch { lastError = error }
             }
             if let lastError {
                 await CloudBackupStatus.shared.reportFailure(lastError)

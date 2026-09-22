@@ -184,9 +184,13 @@ struct InpaintView: View {
                 let result = try await InpaintingService.fill(baseImage, maskImage: mask)
                 Haptics.success()
                 viewModel.resultImage = result
+                ActionLoggingService.log("inpaint_erase", detail: ["strokes": strokes.count], outcome: "success")
             } catch {
                 errorMessage = error.localizedDescription
                 Haptics.error()
+                ActionLoggingService.log("inpaint_erase", detail: [
+                    "strokes": strokes.count, "error": error.localizedDescription,
+                ], outcome: "failed")
             }
             isProcessing = false
         }

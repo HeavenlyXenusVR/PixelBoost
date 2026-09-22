@@ -93,6 +93,7 @@ struct HistoryView: View {
     private func delete(at offsets: IndexSet) {
         let toDelete = offsets.map { entries[$0] }
         entries.remove(atOffsets: offsets)
+        ActionLoggingService.log("history_delete", detail: ["count": toDelete.count])
         Task {
             for entry in toDelete {
                 try? await UpscaleHistoryService.delete(id: entry.id)
@@ -106,8 +107,10 @@ struct HistoryView: View {
             try await UpscaleHistoryService.deleteAllOwn()
             entries = []
             stats = try? await UpscaleStatsService.fetchOwn()
+            ActionLoggingService.log("history_clear_all", outcome: "success")
         } catch {
             errorMessage = error.localizedDescription
+            ActionLoggingService.log("history_clear_all", detail: ["error": error.localizedDescription], outcome: "failed")
         }
     }
 }

@@ -16,6 +16,13 @@ struct ModelPickerView: View {
                     ForEach(UpscaleModelChoice.allCases) { choice in
                         ModelCard(choice: choice, isSelected: provider.modelChoice == choice) {
                             provider.modelChoice = choice
+                            // The provider's own observer records the
+                            // settings_change; this records that the change
+                            // came from the full picker rather than the
+                            // Settings row's menu.
+                            ActionLoggingService.log("model_picker_select", detail: [
+                                "model": choice.rawValue, "bundled": choice.isBundled,
+                            ])
                             Haptics.lightImpact()
                             dismiss()
                         }

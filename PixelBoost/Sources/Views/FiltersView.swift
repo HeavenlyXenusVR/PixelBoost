@@ -143,6 +143,7 @@ struct FiltersView: View {
     private func apply() {
         guard selectedFilter != .none, let current = viewModel.resultImage ?? viewModel.sourceImage else { return }
         viewModel.resultImage = selectedFilter.apply(to: current)
+        ActionLoggingService.log("filter_apply", detail: ["filter": selectedFilter.rawValue], outcome: "success")
     }
 
     private var emptyState: some View {

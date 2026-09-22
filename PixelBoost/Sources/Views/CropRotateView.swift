@@ -103,6 +103,7 @@ struct CropRotateView: View {
     private func apply() {
         guard hasChanges, let workingImage else { return }
         viewModel.resultImage = finalImage(from: workingImage)
+        ActionLoggingService.log("crop_rotate_apply", outcome: "success")
     }
 
     private func toolButton(_ systemImage: String, action: @escaping () -> Void) -> some View {

@@ -28,7 +28,18 @@ struct UpscalePhotoIntent: AppIntent {
             upscaler = LanczosUpscaler()
         }
 
-        let outcome = await UpscaleRunner.run(sourceImage, using: upscaler, sourceFileSizeBytes: photo.data.count) { _ in }
+        ActionLoggingService.log("intent_upscale_start", detail: [
+            "source_width": Int(sourceImage.size.width),
+            "source_height": Int(sourceImage.size.height),
+        ])
+        let outcome = await UpscaleRunner.run(
+            sourceImage, using: upscaler, sourceFileSizeBytes: photo.data.count,
+            requestedScale: 4
+        ) { _ in }
+        ActionLoggingService.logResult("intent_upscale", error: outcome.error)
+        // An intent process can be torn down the moment it returns, so
+        // don't leave this run's events sitting in the buffer.
+        TelemetryService.flush()
         guard let result = outcome.result,
               let data = ImportExportService.boundedData(for: result.image)
         else {

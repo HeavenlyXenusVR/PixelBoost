@@ -249,7 +249,11 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         }
 
         guard let stitchedCGImage = context.makeImage() else { throw UpscaleError.renderFailed }
-        return UpscaleResult(image: UIImage(cgImage: stitchedCGImage, scale: 1, orientation: .up), tileCount: plan.tiles.count)
+        return UpscaleResult(
+            image: UIImage(cgImage: stitchedCGImage, scale: 1, orientation: .up),
+            tileCount: plan.tiles.count,
+            modelInputSize: CGSize(width: workingCGImage.width, height: workingCGImage.height)
+        )
     }
 
     private func runModel(on tile: UIImage) async throws -> UIImage {

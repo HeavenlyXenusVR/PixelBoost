@@ -209,6 +209,7 @@ struct SelectiveAdjustView: View {
                 SelectiveAdjustmentService.apply(adjustments, to: baseImage, maskedBy: mask)
             }.value
             viewModel.resultImage = result
+            ActionLoggingService.log("selective_adjust_apply", detail: ["strokes": strokes.count], outcome: "success")
             isApplying = false
         }
     }

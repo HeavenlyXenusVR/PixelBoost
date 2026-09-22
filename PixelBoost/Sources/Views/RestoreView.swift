@@ -165,6 +165,9 @@ struct RestoreView: View {
             }
 
             viewModel.resultImage = result
+            ActionLoggingService.log("restore_apply", detail: [
+                "denoise": amount, "face_restore": wantsFaceRestore,
+            ], outcome: "success")
             isApplying = false
         }
     }

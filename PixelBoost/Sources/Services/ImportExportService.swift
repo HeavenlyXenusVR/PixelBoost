@@ -13,6 +13,38 @@ struct StoredImageEntry: Decodable, Identifiable {
     let width: Int
     let height: Int
     let file_size_bytes: Int
+    /// Uploaded automatically after an upscale (Temporary Cloud Save)
+    /// rather than by an explicit user action. Optional so a response from
+    /// a server predating the column still decodes.
+    let is_auto: Bool?
+    let label: String?
+
+    /// Parsed from `expires_at` — the server sends a plain (UTC) timestamp
+    /// with no zone suffix, which ISO8601DateFormatter won't take without
+    /// being told, hence the explicit formatter rather than a Codable date
+    /// strategy.
+    var expiryDate: Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        for format in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: expires_at) { return date }
+        }
+        return nil
+    }
+}
+
+/// `GET /storage/usage` — what this device currently has parked in
+/// temporary storage, per kind.
+struct StoredImageUsage: Decodable {
+    struct Bucket: Decodable {
+        let count: Int
+        let total_bytes: Int
+        let next_expiry: String?
+    }
+    let imports: Bucket
+    let exports: Bucket
 }
 
 struct StoredImageUploadResult: Decodable {
@@ -20,6 +52,7 @@ struct StoredImageUploadResult: Decodable {
     let expires_in_hours: Int
     let width: Int
     let height: Int
+    let file_size_bytes: Int?
 }
 
 private struct StoredImageListResponse: Decodable {
@@ -39,7 +72,8 @@ enum ImportExportService {
 
     @discardableResult
     static func upload(
-        _ image: UIImage, kind: Kind, historyID: String? = nil, ttlHours: Int? = nil
+        _ image: UIImage, kind: Kind, historyID: String? = nil, ttlHours: Int? = nil,
+        isAuto: Bool = false, label: String? = nil
     ) async throws -> StoredImageUploadResult {
         // Was unconditionally `image.pngData()` — lossless PNG of a
         // 4x-upscaled photo (easily 50MP+) routinely blew past the
@@ -67,6 +101,12 @@ enum ImportExportService {
         }
         if let ttlHours {
             appendField("ttl_hours", String(ttlHours))
+        }
+        // Lets the Cloud tab tell an automatic per-upscale copy apart from
+        // one the user deliberately parked there.
+        appendField("is_auto", isAuto ? "true" : "false")
+        if let label, !label.isEmpty {
+            appendField("label", label)
         }
 
         let filename = isPNG ? "image.png" : "image.jpg"
@@ -97,6 +137,27 @@ enum ImportExportService {
         let data = try await APIClient.data(for: request)
         guard let image = UIImage(data: data) else { throw UpscaleError.invalidImage }
         return image
+    }
+
+    /// Totals + next expiry for both kinds, so the Cloud tab can show real
+    /// numbers on a screen whose whole premise is that everything on it is
+    /// about to be deleted.
+    static func usage() async throws -> StoredImageUsage {
+        let request = try APIClient.request(path: "storage/usage", queryItems: [
+            URLQueryItem(name: "device_id", value: DeviceIdentity.current),
+        ])
+        return try JSONDecoder().decode(StoredImageUsage.self, from: try await APIClient.data(for: request))
+    }
+
+    /// Deletes everything of `kind` for this device now, instead of waiting
+    /// for expiry.
+    @discardableResult
+    static func clearAll(kind: Kind) async throws -> Int {
+        struct ClearResponse: Decodable { let deleted: Int }
+        let request = try APIClient.request(path: kind.rawValue, method: "DELETE", queryItems: [
+            URLQueryItem(name: "device_id", value: DeviceIdentity.current),
+        ])
+        return try JSONDecoder().decode(ClearResponse.self, from: try await APIClient.data(for: request)).deleted
     }
 
     static func delete(id: String, kind: Kind) async throws {

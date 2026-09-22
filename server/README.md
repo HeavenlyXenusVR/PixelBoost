@@ -40,6 +40,26 @@ statement was actually exercised, not just reviewed for syntax.
   (see `ActionLogEntry`)
 - `GET /log/action-history?device_id=...&action=...&limit=&offset=` —
   recent action entries
+- `POST /log/actions` — batched `/log/action` (the app buffers events and
+  flushes them together; at most 200 per request)
+- `POST /log/snapshot` — one ambient `device_snapshots` row (thermal state,
+  Low Power Mode, battery, memory, free disk, session uptime), sampled on a
+  timer and at launch/foreground/background/thermal change/memory warning
+  rather than tied to any one action
+- `GET /log/snapshots?device_id=...&limit=&offset=`
+
+`upscale_history` also carries per-run context beyond the original
+dimensions/timing columns: `detail_level`, `model_input_width/height` (what
+the model actually saw, after any detail-budget downscale — the column that
+makes a v3.26.13-style "weak upscale" regression visible instead of
+invisible between source and output), `requested_scale`, the
+strength/anti-aliasing/sharpen/denoise settings the run used, `was_batch`,
+`cancelled`, thermal state before and after, Low Power Mode, battery level
+and memory. `action_log` gains `session_id`, `outcome`, `duration_ms` and
+`thermal_state`.
+
+All of it is switchable off in the app (Settings > Diagnostics), and
+nothing is sent at all without a server URL configured.
 
 **Temporary image storage** (imports = pre-upscale, exports = post-upscale;
 both auto-expire — see "Expiry" below)
@@ -51,6 +71,17 @@ both auto-expire — see "Expiry" below)
   optional, `file`) — `history_id` links back to the `upscale_history` row
   that produced this result
 - `GET /export/{id}`, `GET /export?device_id=...`, `DELETE /export/{id}`
+- `DELETE /export?device_id=...` / `DELETE /import?device_id=...` — delete
+  this device's stored images now rather than waiting for expiry
+- `GET /storage/usage?device_id=...` — count, total bytes and next expiry
+  per kind
+
+Both `POST /import` and `POST /export` also take `is_auto` (an automatic
+per-upscale copy vs. a deliberate one-off) and an optional `label`. The
+app's **Temporary Cloud Save** setting (on by default, results only) posts
+every upscale result here with `ttl_hours` from Settings — a day unless
+changed — which is what the Cloud tab lists and what the cleanup loop
+below deletes on expiry.
 
 **Custom presets** (named model+overlap combos, permanent — not TTL'd)
 - `POST /presets` — upsert by `(device_id, name)`, returns the stored `id`

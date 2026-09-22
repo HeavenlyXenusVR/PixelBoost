@@ -92,6 +92,15 @@ final class BatchUpscaleViewModel: ObservableObject {
             // the interactive path (see UpscalerViewModel.compareModels).
             let autoRenderDenoise = provider.modelChoice == .auto
                 && (provider.lastAutoSelectedModel == .render3D || provider.lastAutoSelectedModel == .stylizedRender)
+            let batchStartedAt = Date()
+            ActionLoggingService.log("batch_start", detail: [
+                "count": items.count,
+                "model_choice": provider.modelChoice.rawValue,
+                "detail": provider.detail.rawValue,
+                "scale": provider.scaleFactor.rawValue,
+                "auto_render_denoise": autoRenderDenoise,
+                "thermal_state": TelemetryService.thermalStateName,
+            ])
             BatchLiveActivityController.start(totalCount: items.count)
             for index in items.indices {
                 currentIndex = index
@@ -102,6 +111,20 @@ final class BatchUpscaleViewModel: ObservableObject {
             BatchLiveActivityController.end(completedCount: items.count, totalCount: items.count)
             currentIndex = nil
             isRunning = false
+            let succeeded = items.filter { if case .done = $0.status { return true } else { return false } }.count
+            ActionLoggingService.log(
+                "batch_complete",
+                detail: [
+                    "count": items.count, "succeeded": succeeded,
+                    "failed": items.count - succeeded,
+                    // Where the batch left the device thermally — the
+                    // sustained-load case the per-run thermal columns only
+                    // see one photo at a time.
+                    "thermal_state_end": TelemetryService.thermalStateName,
+                ],
+                outcome: succeeded == items.count ? "success" : (succeeded == 0 ? "failed" : "partial"),
+                durationMS: Int(Date().timeIntervalSince(batchStartedAt) * 1000)
+            )
             if items.contains(where: { if case .done = $0.status { return true } else { return false } }) {
                 Haptics.success()
             }
@@ -146,7 +169,10 @@ final class BatchUpscaleViewModel: ObservableObject {
                 antiAliasingAmount: provider.antiAliasingAmount,
                 sharpenAmount: provider.sharpenAmount,
                 autoRenderDenoise: autoRenderDenoise,
-                blendAmount: provider.upscaleStrength
+                blendAmount: provider.upscaleStrength,
+                detailLevel: provider.detail.rawValue,
+                requestedScale: provider.scaleFactor.rawValue,
+                isBatch: true
             ) { _ in }
             guard let result = outcome.result else {
                 items[index].status = .failed(outcome.error?.localizedDescription ?? "Upscale failed.")

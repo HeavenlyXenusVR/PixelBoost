@@ -141,7 +141,9 @@ final class UpscalerViewModel: ObservableObject {
                 denoiseAmount: provider.denoiseBeforeUpscale ? 0.5 : 0,
                 antiAliasingAmount: provider.antiAliasingAmount,
                 sharpenAmount: provider.sharpenAmount,
-                blendAmount: provider.upscaleStrength
+                blendAmount: provider.upscaleStrength,
+                detailLevel: provider.detail.rawValue,
+                requestedScale: provider.scaleFactor.rawValue
             ) { [weak self] value in
                 Task { @MainActor in self?.progress = value }
             }
@@ -213,7 +215,9 @@ final class UpscalerViewModel: ObservableObject {
                 let outcome = await UpscaleRunner.run(
                     sourceImage, using: candidate.upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
                     antiAliasingAmount: provider.antiAliasingAmount,
-                    autoRenderDenoise: autoRenderDenoise
+                    autoRenderDenoise: autoRenderDenoise,
+                    detailLevel: provider.detail.rawValue,
+                    requestedScale: provider.scaleFactor.rawValue
                 ) { [weak self] tileProgress in
                     Task { @MainActor in
                         self?.comparisonProgress = (Double(index) + tileProgress) / Double(candidates.count)

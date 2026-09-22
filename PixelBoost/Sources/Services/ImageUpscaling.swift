@@ -37,6 +37,11 @@ struct UpscaleResult {
     /// Number of tiles the image was split into — nil for strategies that
     /// don't tile (e.g. `LanczosUpscaler`).
     let tileCount: Int?
+    /// The size the model was actually fed, after any detail-budget
+    /// downscale — not the source size and not the output size. Logged to
+    /// `upscale_history.model_input_width/height`; nil for strategies with
+    /// no model (`LanczosUpscaler`).
+    var modelInputSize: CGSize? = nil
 }
 
 enum UpscaleError: LocalizedError {

@@ -174,9 +174,13 @@ struct ScriptedFilterView: View {
         case .success(let image):
             viewModel.resultImage = image
             Haptics.success()
+            ActionLoggingService.log("scripted_filter_apply", detail: ["script_length": code.count], outcome: "success")
         case .failure(let error):
             errorMessage = error.localizedDescription
             Haptics.error()
+            ActionLoggingService.log("scripted_filter_apply", detail: [
+                "script_length": code.count, "error": error.localizedDescription,
+            ], outcome: "failed")
         }
         isRunning = false
     }

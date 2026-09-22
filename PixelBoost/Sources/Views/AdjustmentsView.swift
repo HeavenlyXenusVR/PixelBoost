@@ -111,6 +111,7 @@ struct AdjustmentsView: View {
     private func apply() {
         guard let current = viewModel.resultImage ?? viewModel.sourceImage, !adjustments.isIdentity else { return }
         viewModel.resultImage = adjustments.apply(to: current)
+        ActionLoggingService.log("adjustments_apply", outcome: "success")
     }
 
     private func adjustmentSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {

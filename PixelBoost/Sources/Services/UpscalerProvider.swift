@@ -223,6 +223,23 @@ final class UpscalerProvider: ObservableObject {
     /// `UpscalerProvider` instance to go through) to decide whether an
     /// upscale's source/result images get uploaded alongside its metadata.
     static let autoCloudBackupEnabledDefaultsKey = "com.pixelboost.autoCloudBackupEnabled"
+    /// Read by `UpscaleRunner` the same way (no provider instance there).
+    static let temporaryCloudSaveEnabledDefaultsKey = "com.pixelboost.temporaryCloudSaveEnabled"
+    static let temporaryCloudTTLHoursDefaultsKey = "com.pixelboost.temporaryCloudTTLHours"
+
+    /// On by default: every result is kept server-side for
+    /// `storedTemporaryCloudTTLHours` and then deleted automatically. Only
+    /// the *result* — the source photo is the separate, off-by-default Auto
+    /// Cloud Backup.
+    static var storedTemporaryCloudSaveEnabled: Bool {
+        UserDefaults.standard.object(forKey: temporaryCloudSaveEnabledDefaultsKey) as? Bool ?? true
+    }
+
+    /// Clamped to the server's own 1...168 accepted range.
+    static var storedTemporaryCloudTTLHours: Int {
+        let stored = UserDefaults.standard.object(forKey: temporaryCloudTTLHoursDefaultsKey) as? Int ?? 24
+        return min(max(stored, 1), 168)
+    }
     private static let preserveOriginalDefaultsKey = "com.pixelboost.preserveOriginal"
     private static let addToAlbumEnabledDefaultsKey = "com.pixelboost.addToAlbumEnabled"
     private static let watermarkEnabledDefaultsKey = "com.pixelboost.watermarkEnabled"
@@ -241,17 +258,17 @@ final class UpscalerProvider: ObservableObject {
     private static let autoTestRegionSize = 256
 
     @Published var modelChoice: UpscaleModelChoice {
-        didSet { UserDefaults.standard.set(modelChoice.rawValue, forKey: Self.modelChoiceDefaultsKey) }
+        didSet { UserDefaults.standard.set(modelChoice.rawValue, forKey: Self.modelChoiceDefaultsKey); Self.logChange("model_choice", modelChoice.rawValue) }
     }
     @Published var quality: UpscaleQuality {
-        didSet { UserDefaults.standard.set(quality.rawValue, forKey: Self.qualityDefaultsKey) }
+        didSet { UserDefaults.standard.set(quality.rawValue, forKey: Self.qualityDefaultsKey); Self.logChange("quality", quality.rawValue) }
     }
     /// Only consulted when `quality == .custom` — see `UpscaleQuality.overlap(customOverlap:)`.
     /// 1...32 covers the full range `.fast`(nil)/.standard(8)/.best(16)
     /// already span, plus room past `.best` for anyone who wants to trade
     /// even more time for tile-seam quality.
     @Published var customOverlap: Int {
-        didSet { UserDefaults.standard.set(customOverlap, forKey: Self.customOverlapDefaultsKey) }
+        didSet { UserDefaults.standard.set(customOverlap, forKey: Self.customOverlapDefaultsKey); Self.logChange("custom_overlap", customOverlap) }
     }
     /// 1.0 (default) is the model's raw output, unchanged. Below that,
     /// `UpscaleRunner` cross-dissolves the model's result with a plain
@@ -260,37 +277,37 @@ final class UpscalerProvider: ObservableObject {
     /// switching models entirely, down to 0.0 (the model runs, but its
     /// result is entirely replaced by the plain resize).
     @Published var upscaleStrength: Double {
-        didSet { UserDefaults.standard.set(upscaleStrength, forKey: Self.upscaleStrengthDefaultsKey) }
+        didSet { UserDefaults.standard.set(upscaleStrength, forKey: Self.upscaleStrengthDefaultsKey); Self.logChange("upscale_strength", upscaleStrength) }
     }
     @Published var scaleFactor: UpscaleFactor {
-        didSet { UserDefaults.standard.set(scaleFactor.rawValue, forKey: Self.scaleFactorDefaultsKey) }
+        didSet { UserDefaults.standard.set(scaleFactor.rawValue, forKey: Self.scaleFactorDefaultsKey); Self.logChange("scale_factor", scaleFactor.rawValue) }
     }
     @Published var detail: UpscaleDetail {
-        didSet { UserDefaults.standard.set(detail.rawValue, forKey: Self.detailDefaultsKey) }
+        didSet { UserDefaults.standard.set(detail.rawValue, forKey: Self.detailDefaultsKey); Self.logChange("detail", detail.rawValue) }
     }
     @Published var exportFormat: ExportFormat {
-        didSet { UserDefaults.standard.set(exportFormat.rawValue, forKey: Self.exportFormatDefaultsKey) }
+        didSet { UserDefaults.standard.set(exportFormat.rawValue, forKey: Self.exportFormatDefaultsKey); Self.logChange("export_format", exportFormat.rawValue) }
     }
     /// JPEG/HEIC compression quality, 0...1. Meaningless for `.png`
     /// (lossless) — kept as a single shared value rather than one per
     /// format since a user picking between HEIC and JPEG almost certainly
     /// wants "the same tradeoff," not to retune it per format.
     @Published var exportQuality: Double {
-        didSet { UserDefaults.standard.set(exportQuality, forKey: Self.exportQualityDefaultsKey) }
+        didSet { UserDefaults.standard.set(exportQuality, forKey: Self.exportQualityDefaultsKey); Self.logChange("export_quality", exportQuality) }
     }
     /// Runs `RestoreService.denoise` on the source photo before it's handed
     /// to the upscaler — helps a model avoid amplifying sensor noise into
     /// upscaled speckle on grainy/low-light source photos. Off by default
     /// since it softens fine detail slightly on already-clean photos.
     @Published var denoiseBeforeUpscale: Bool {
-        didSet { UserDefaults.standard.set(denoiseBeforeUpscale, forKey: Self.denoiseBeforeUpscaleDefaultsKey) }
+        didSet { UserDefaults.standard.set(denoiseBeforeUpscale, forKey: Self.denoiseBeforeUpscaleDefaultsKey); Self.logChange("denoise_before_upscale", denoiseBeforeUpscale) }
     }
     /// 0...1, a subtle Gaussian blur applied to the final result before any
     /// sharpen pass. This is the default anti-aliasing step for upscaled
     /// output — higher values smooth stair-stepped edges more, while 0 keeps
     /// the full model output untouched.
     @Published var antiAliasingAmount: Double {
-        didSet { UserDefaults.standard.set(antiAliasingAmount, forKey: Self.antiAliasingAmountDefaultsKey) }
+        didSet { UserDefaults.standard.set(antiAliasingAmount, forKey: Self.antiAliasingAmountDefaultsKey); Self.logChange("anti_aliasing_amount", antiAliasingAmount) }
     }
     /// 0...1, applied via `PostSharpen` right after the upscale finishes
     /// (on the final, already-upscaled image). 0 is off — a model's own
@@ -298,7 +315,7 @@ final class UpscalerProvider: ObservableObject {
     /// wants an extra edge-crispness pass on top, same idea as Restore's
     /// face-sharpen but applied over the whole frame.
     @Published var sharpenAmount: Double {
-        didSet { UserDefaults.standard.set(sharpenAmount, forKey: Self.sharpenAmountDefaultsKey) }
+        didSet { UserDefaults.standard.set(sharpenAmount, forKey: Self.sharpenAmountDefaultsKey); Self.logChange("sharpen_amount", sharpenAmount) }
     }
     /// When on, a successful single-photo upscale calls
     /// `UpscalerViewModel.saveResultToPhotos()` on its own right after
@@ -306,7 +323,7 @@ final class UpscalerProvider: ObservableObject {
     /// Batch (already saves every item as it completes) or Compare Models
     /// (nothing to save until a candidate's picked).
     @Published var autoSaveEnabled: Bool {
-        didSet { UserDefaults.standard.set(autoSaveEnabled, forKey: Self.autoSaveEnabledDefaultsKey) }
+        didSet { UserDefaults.standard.set(autoSaveEnabled, forKey: Self.autoSaveEnabledDefaultsKey); Self.logChange("auto_save_enabled", autoSaveEnabled) }
     }
     /// When on, every upscale result *and* every edit ("Apply" on any tool
     /// tab, Cutout included) is uploaded to the server's temporary scratch
@@ -319,33 +336,60 @@ final class UpscalerProvider: ObservableObject {
     /// Debug metadata logging (`/log/upscale`) is unaffected by this flag
     /// either way — only the image bytes themselves are gated.
     @Published var autoCloudBackupEnabled: Bool {
-        didSet { UserDefaults.standard.set(autoCloudBackupEnabled, forKey: Self.autoCloudBackupEnabledDefaultsKey) }
+        didSet { UserDefaults.standard.set(autoCloudBackupEnabled, forKey: Self.autoCloudBackupEnabledDefaultsKey); Self.logChange("auto_cloud_backup_enabled", autoCloudBackupEnabled) }
+    }
+    /// When on (the default), every upscale result is kept in the server's
+    /// expiring scratch storage for `temporaryCloudTTLHours` — a day by
+    /// default — and deleted automatically after that. Lets a result be
+    /// re-fetched from the Cloud tab (or another device) without re-running
+    /// the model. Unlike `autoCloudBackupEnabled` this never uploads the
+    /// source photo, only the result the user just produced.
+    @Published var temporaryCloudSaveEnabled: Bool {
+        didSet { UserDefaults.standard.set(temporaryCloudSaveEnabled, forKey: Self.temporaryCloudSaveEnabledDefaultsKey); Self.logChange("temporary_cloud_save_enabled", temporaryCloudSaveEnabled) }
+    }
+    /// How long a temporarily-saved result lives server-side. The server
+    /// caps this at 168h (7 days) regardless.
+    @Published var temporaryCloudTTLHours: Int {
+        didSet { UserDefaults.standard.set(temporaryCloudTTLHours, forKey: Self.temporaryCloudTTLHoursDefaultsKey); Self.logChange("temporary_cloud_t_t_l_hours", temporaryCloudTTLHours) }
+    }
+    /// Master switch for every telemetry event, snapshot and upscale log
+    /// (see `TelemetryService.isEnabled`). On by default — this is the
+    /// always-on debug logging the README describes — but one switch turns
+    /// all of it off.
+    @Published var diagnosticsEnabled: Bool {
+        didSet { UserDefaults.standard.set(diagnosticsEnabled, forKey: TelemetryService.diagnosticsEnabledDefaultsKey); Self.logChange("diagnostics_enabled", diagnosticsEnabled) }
     }
     /// When on, every save (single photo and Batch) always adds a new
     /// Photos asset instead of overwriting the original in place — the
     /// opt-out for anyone who wants the pre-overwrite-default behavior
     /// back. See `PhotoLibrarySaver`.
     @Published var preserveOriginal: Bool {
-        didSet { UserDefaults.standard.set(preserveOriginal, forKey: Self.preserveOriginalDefaultsKey) }
+        didSet { UserDefaults.standard.set(preserveOriginal, forKey: Self.preserveOriginalDefaultsKey); Self.logChange("preserve_original", preserveOriginal) }
     }
     /// When on (the default), every saved photo is also added to a
     /// "PixelBoost" album in Photos — created on first use via
     /// `PhotoAlbumService` — so upscaled/edited photos are easy to find as a
     /// set instead of mixed into the Camera Roll with everything else.
     @Published var addToAlbumEnabled: Bool {
-        didSet { UserDefaults.standard.set(addToAlbumEnabled, forKey: Self.addToAlbumEnabledDefaultsKey) }
+        didSet { UserDefaults.standard.set(addToAlbumEnabled, forKey: Self.addToAlbumEnabledDefaultsKey); Self.logChange("add_to_album_enabled", addToAlbumEnabled) }
     }
     @Published var watermarkEnabled: Bool {
-        didSet { UserDefaults.standard.set(watermarkEnabled, forKey: Self.watermarkEnabledDefaultsKey) }
+        didSet { UserDefaults.standard.set(watermarkEnabled, forKey: Self.watermarkEnabledDefaultsKey); Self.logChange("watermark_enabled", watermarkEnabled) }
     }
     @Published var watermarkText: String {
-        didSet { UserDefaults.standard.set(watermarkText, forKey: Self.watermarkTextDefaultsKey) }
+        didSet {
+            UserDefaults.standard.set(watermarkText, forKey: Self.watermarkTextDefaultsKey)
+            // Length only — the watermark string is user-authored content
+            // (often a real name or handle), and a debug log has no reason
+            // to hold it.
+            Self.logChange("watermark_text_length", watermarkText.count)
+        }
     }
     @Published var watermarkPosition: WatermarkPosition {
-        didSet { UserDefaults.standard.set(watermarkPosition.rawValue, forKey: Self.watermarkPositionDefaultsKey) }
+        didSet { UserDefaults.standard.set(watermarkPosition.rawValue, forKey: Self.watermarkPositionDefaultsKey); Self.logChange("watermark_position", watermarkPosition.rawValue) }
     }
     @Published var watermarkOpacity: Double {
-        didSet { UserDefaults.standard.set(watermarkOpacity, forKey: Self.watermarkOpacityDefaultsKey) }
+        didSet { UserDefaults.standard.set(watermarkOpacity, forKey: Self.watermarkOpacityDefaultsKey); Self.logChange("watermark_opacity", watermarkOpacity) }
     }
     /// Which tab `RootView` selects on launch. Read once, at app start —
     /// see `AccentTheme`'s doc comment for why settings read only once at
@@ -353,14 +397,14 @@ final class UpscalerProvider: ObservableObject {
     /// app's whole lifetime, so there's no later point this would "just
     /// re-apply" on its own without extra plumbing).
     @Published var defaultTab: AppTab {
-        didSet { UserDefaults.standard.set(defaultTab.rawValue, forKey: Self.defaultTabDefaultsKey) }
+        didSet { UserDefaults.standard.set(defaultTab.rawValue, forKey: Self.defaultTabDefaultsKey); Self.logChange("default_tab", defaultTab.rawValue) }
     }
     /// Persisted immediately on change, but only actually read by
     /// `PBColor` once, at first access — see `AccentTheme`. Settings shows
     /// the current selection either way (so the picker itself stays
     /// accurate), with a footnote explaining the next-launch delay.
     @Published var accentTheme: AccentTheme {
-        didSet { UserDefaults.standard.set(accentTheme.rawValue, forKey: Self.accentThemeDefaultsKey) }
+        didSet { UserDefaults.standard.set(accentTheme.rawValue, forKey: Self.accentThemeDefaultsKey); Self.logChange("accent_theme", accentTheme.rawValue) }
     }
     /// True while a not-yet-cached model is being loaded — lets the UI show
     /// a spinner instead of silently hitching on the first use of a given
@@ -377,6 +421,17 @@ final class UpscalerProvider: ObservableObject {
     /// `UpscalerViewModel.compareModels()` — so this only ever reflects a
     /// batch run.
     @Published private(set) var lastAutoSelectedModel: UpscaleModelChoice?
+
+    /// Every `@Published` setting above records its own change, so
+    /// "which settings was this device actually running with" is
+    /// answerable from the log without a separate call at each UI control
+    /// (and without missing the ones changed by preset restore or a
+    /// settings restore rather than by a tap).
+    private static func logChange(_ setting: String, _ value: Any) {
+        // Debounced — a slider's property observer fires on every
+        // intermediate value during a drag.
+        TelemetryService.recordSettingChange(setting, value: value)
+    }
 
     private var cache: [String: CoreMLTileUpscaler] = [:]
 
@@ -396,6 +451,9 @@ final class UpscalerProvider: ObservableObject {
         scaleFactor = storedScale.flatMap(UpscaleFactor.init(rawValue:)) ?? .x4
         detail = UserDefaults.standard.string(forKey: Self.detailDefaultsKey)
             .flatMap(UpscaleDetail.init(rawValue:)) ?? .balanced
+        temporaryCloudSaveEnabled = Self.storedTemporaryCloudSaveEnabled
+        temporaryCloudTTLHours = Self.storedTemporaryCloudTTLHours
+        diagnosticsEnabled = UserDefaults.standard.object(forKey: TelemetryService.diagnosticsEnabledDefaultsKey) as? Bool ?? true
         exportFormat = UserDefaults.standard.string(forKey: Self.exportFormatDefaultsKey)
             .flatMap(ExportFormat.init(rawValue:)) ?? .auto
         let storedQuality = UserDefaults.standard.object(forKey: Self.exportQualityDefaultsKey) as? Double

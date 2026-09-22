@@ -130,6 +130,7 @@ struct OverlaysView: View {
     private func apply() {
         guard !overlays.isEmpty, let baseImage, containerSize.width > 0 else { return }
         viewModel.resultImage = OverlayCompositor.render(overlays: overlays, onto: baseImage, canvasSize: containerSize)
+        ActionLoggingService.log("overlay_apply", detail: ["overlays": overlays.count], outcome: "success")
     }
 
     private func overlayView(_ overlay: PhotoOverlay, containerSize: CGSize) -> some View {

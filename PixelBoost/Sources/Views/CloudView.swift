@@ -10,11 +10,17 @@ struct CloudView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var previewImage: UIImage?
+    @State private var usage: StoredImageUsage?
+    @State private var isConfirmingClear = false
 
     var body: some View {
         VStack(spacing: 0) {
             segmentedControl
-                .padding(16)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+            usageSummary
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
 
             Group {
                 if let errorMessage {
@@ -22,7 +28,7 @@ struct CloudView: View {
                 } else if entries.isEmpty && !isLoading {
                     emptyState(
                         systemImage: "icloud", title: "Nothing here yet",
-                        message: "Back up a photo from the main screen and it'll show up here until it expires."
+                        message: "Upscale results are kept here for a day when Temporary Cloud Save is on, and you can back up a photo manually from the main screen. Everything here deletes itself when it expires."
                     )
                 } else {
                     List {
@@ -49,6 +55,23 @@ struct CloudView: View {
         .background(PBColor.background.ignoresSafeArea())
         .navigationTitle("Cloud Storage")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !entries.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Clear All", role: .destructive) { isConfirmingClear = true }
+                        .foregroundStyle(PBColor.warn)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete every \(kind == .imports ? "import" : "result") stored for this device?",
+            isPresented: $isConfirmingClear, titleVisibility: .visible
+        ) {
+            Button("Delete All", role: .destructive) { Task { await clearAll() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("These expire on their own anyway — this just deletes them now. Photos saved to your library aren't affected.")
+        }
         .toolbarBackground(PBColor.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .task(id: kind) { await load() }
@@ -62,6 +85,24 @@ struct CloudView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    /// Real totals rather than a vague reassurance: this screen's whole
+    /// premise is that everything on it is scheduled for deletion, so how
+    /// much is here and when the next thing goes are the two facts worth
+    /// showing.
+    @ViewBuilder
+    private var usageSummary: some View {
+        if let bucket = kind == .imports ? usage?.imports : usage?.exports, bucket.count > 0 {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("\(bucket.count) item\(bucket.count == 1 ? "" : "s") · \(ByteCountFormatter.string(fromByteCount: Int64(bucket.total_bytes), countStyle: .file)) · auto-deleted as each expires")
+                    .font(.system(size: 11))
+            }
+            .foregroundStyle(PBColor.inkDim)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private var segmentedControl: some View {
@@ -97,23 +138,55 @@ struct CloudView: View {
         errorMessage = nil
         do {
             entries = try await ImportExportService.list(kind: kind)
+            usage = try? await ImportExportService.usage()
+            ActionLoggingService.log("cloud_list", detail: [
+                "kind": kind.rawValue, "count": entries.count,
+            ], outcome: "success")
         } catch {
             errorMessage = error.localizedDescription
+            ActionLoggingService.log("cloud_list", detail: [
+                "kind": kind.rawValue, "error": error.localizedDescription,
+            ], outcome: "failed")
         }
         isLoading = false
     }
 
     private func downloadAndPreview(_ entry: StoredImageEntry) async {
+        let startedAt = Date()
         do {
             previewImage = try await ImportExportService.download(id: entry.id, kind: kind)
+            ActionLoggingService.log(
+                "cloud_download", detail: ["kind": kind.rawValue, "bytes": entry.file_size_bytes],
+                outcome: "success", durationMS: Int(Date().timeIntervalSince(startedAt) * 1000)
+            )
         } catch {
             errorMessage = error.localizedDescription
+            ActionLoggingService.log("cloud_download", detail: [
+                "kind": kind.rawValue, "error": error.localizedDescription,
+            ], outcome: "failed")
+        }
+    }
+
+    private func clearAll() async {
+        do {
+            let deleted = try await ImportExportService.clearAll(kind: kind)
+            entries = []
+            usage = try? await ImportExportService.usage()
+            ActionLoggingService.log("cloud_clear_all", detail: [
+                "kind": kind.rawValue, "deleted": deleted,
+            ], outcome: "success")
+        } catch {
+            errorMessage = error.localizedDescription
+            ActionLoggingService.log("cloud_clear_all", detail: [
+                "kind": kind.rawValue, "error": error.localizedDescription,
+            ], outcome: "failed")
         }
     }
 
     private func delete(at offsets: IndexSet) {
         let toDelete = offsets.map { entries[$0] }
         entries.remove(atOffsets: offsets)
+        ActionLoggingService.log("cloud_delete", detail: ["kind": kind.rawValue, "count": toDelete.count])
         Task {
             for entry in toDelete {
                 try? await ImportExportService.delete(id: entry.id, kind: kind)
@@ -147,9 +220,25 @@ private struct CloudCard: View {
                     .font(.system(size: 13.5, weight: .bold))
                     .foregroundStyle(PBColor.ink)
                     .lineLimit(1)
-                Text("\(entry.width)×\(entry.height) · \(formattedSize)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(PBColor.inkDim)
+                HStack(spacing: 5) {
+                    Text("\(entry.width)×\(entry.height) · \(formattedSize)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(PBColor.inkDim)
+                    if entry.is_auto == true {
+                        Text("AUTO")
+                            .font(.system(size: 8.5, weight: .black))
+                            .foregroundStyle(PBColor.accent)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(PBColor.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    }
+                }
+                if let label = entry.label, !label.isEmpty {
+                    Text(label)
+                        .font(.system(size: 10))
+                        .foregroundStyle(PBColor.inkDim)
+                        .lineLimit(1)
+                }
             }
             Spacer()
             Text(expiryText)

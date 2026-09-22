@@ -15,4 +15,13 @@ struct ActionLogEntry: Encodable {
     let app_version: String?
     let os_version: String?
     let device_model: String?
+    /// Per-app-run id (see `TelemetryService.sessionID`) — groups one
+    /// session's events together without any new persistent identifier.
+    let session_id: String?
+    /// Promoted out of `detail` into its own column: "success"/"failed"/
+    /// "cancelled"/..., the field worth filtering and aggregating on.
+    let outcome: String?
+    let duration_ms: Int?
+    /// Thermal state at the moment the event was recorded.
+    let thermal_state: String?
 }
