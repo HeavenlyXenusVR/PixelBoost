@@ -17,12 +17,21 @@ struct ImageStatistics {
     let meanB: Double
     let minLuma: Double
     let maxLuma: Double
-    /// Mean Laplacian edge response over a desaturated copy — a
-    /// no-reference proxy for how much hard line/edge structure (vs. a
-    /// smooth photographic gradient) is actually in the frame. Same
-    /// desaturate-then-convolve pipeline `sharpnessScore` runs on a
-    /// candidate's output, run here on the source instead.
-    let edgeDensity: Double
+    /// Mean **absolute** Laplacian response over a grayscale copy, on a
+    /// 0...255 scale — a no-reference proxy for how much hard line/edge
+    /// structure (vs. a smooth photographic gradient) is in the frame.
+    /// Same measurement `UpscalerProvider.sharpnessScore` runs on a
+    /// candidate's output, via the one shared implementation below.
+    ///
+    /// The absolute value is not a detail: a Laplacian kernel sums to
+    /// zero, so the *signed* mean of its response is ~0 for any image
+    /// (measured at ±0.0000 across every test image in
+    /// Models/testbench). The previous version averaged the signed
+    /// response through Core Image, which measures nothing unless an
+    /// intermediate happens to clamp the negative lobes away — behavior
+    /// that depends on CIContext's working format rather than on
+    /// anything in the photo.
+    let edgeEnergy: Double
 
     var meanLuma: Double { 0.2126 * meanR + 0.7152 * meanG + 0.0722 * meanB }
 
@@ -49,7 +58,7 @@ struct ImageStatistics {
         return ImageStatistics(
             meanR: Double(average[0]) / 255, meanG: Double(average[1]) / 255, meanB: Double(average[2]) / 255,
             minLuma: minLuma, maxLuma: max(luma(maxPixel), minLuma + 0.05),
-            edgeDensity: edgeDensity(of: ciImage)
+            edgeEnergy: edgeEnergy(of: image)
         )
     }
 
@@ -70,18 +79,61 @@ struct ImageStatistics {
         (0.2126 * Double(pixel[0]) + 0.7152 * Double(pixel[1]) + 0.0722 * Double(pixel[2])) / 255
     }
 
-    private static func edgeDensity(of image: CIImage) -> Double {
-        guard let grayscale = CIFilter(name: "CIColorControls") else { return 0 }
-        grayscale.setValue(image, forKey: kCIInputImageKey)
-        grayscale.setValue(0.0, forKey: kCIInputSaturationKey)
-        guard let grayImage = grayscale.outputImage else { return 0 }
+    /// Mean absolute 3x3 Laplacian over a grayscale copy, 0...255 — the
+    /// single implementation behind both this type's `edgeEnergy` and
+    /// `UpscalerProvider.sharpnessScore`, so a source measurement and a
+    /// candidate's score are always in the same units.
+    ///
+    /// Done as an explicit pixel pass rather than
+    /// CIConvolution3X3 + CIAreaAverage. Core Image keeps intermediates in
+    /// half-float, so the convolution's negative lobes survive into the
+    /// average and cancel the positive ones almost exactly; whether any
+    /// step clamps them away is a property of the context's working
+    /// format, not of the image. A loop over the bytes has no such
+    /// ambiguity, costs little at these sizes, and produces the same
+    /// number on every device.
+    ///
+    /// Reference values from Models/testbench (256px center crops):
+    /// a flat/dark poster ~1.3, an ordinary photo ~4, this app's own
+    /// 3D-render screenshots 9-13, a dense poster ~26. Model outputs of a
+    /// 320px crop at 4x: plain resize ~1.3, Real-ESRGAN family 3.3-4.4.
+    static func edgeEnergy(of image: UIImage, maxDimension: Int = 1024) -> Double {
+        guard let cgImage = image.cgImage else { return 0 }
+        // Measured on a bounded copy: a 4x upscale of a big photo can be
+        // 48MP, and every candidate in a comparison is the same size, so
+        // capping keeps the score cheap without making it unfair.
+        let longest = max(cgImage.width, cgImage.height)
+        let scale = longest > maxDimension ? Double(maxDimension) / Double(longest) : 1
+        let width = max(3, Int(Double(cgImage.width) * scale))
+        let height = max(3, Int(Double(cgImage.height) * scale))
 
-        guard let laplacian = CIFilter(name: "CIConvolution3X3") else { return 0 }
-        laplacian.setValue(grayImage, forKey: kCIInputImageKey)
-        laplacian.setValue(CIVector(values: [0, -1, 0, -1, 4, -1, 0, -1, 0], count: 9), forKey: "inputWeights")
-        laplacian.setValue(0.0, forKey: "inputBias")
-        guard let edges = laplacian.outputImage,
-              let pixel = reduce(edges, filterName: "CIAreaAverage", outputWidth: 1) else { return 0 }
-        return (Double(pixel[0]) + Double(pixel[1]) + Double(pixel[2])) / (3 * 255)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var luma = [Double](repeating: 0, count: width * height)
+        for i in 0..<(width * height) {
+            let o = i * 4
+            luma[i] = 0.2126 * Double(pixels[o]) + 0.7152 * Double(pixels[o + 1]) + 0.0722 * Double(pixels[o + 2])
+        }
+
+        // Interior pixels only — the border would need edge replication to
+        // contribute a meaningful response, and at these sizes one ring of
+        // pixels can't move the mean.
+        var total = 0.0
+        for y in 1..<(height - 1) {
+            let row = y * width
+            for x in 1..<(width - 1) {
+                let i = row + x
+                let response = 4 * luma[i] - luma[i - 1] - luma[i + 1] - luma[i - width] - luma[i + width]
+                total += abs(response)
+            }
+        }
+        return total / Double((width - 2) * (height - 2))
     }
 }

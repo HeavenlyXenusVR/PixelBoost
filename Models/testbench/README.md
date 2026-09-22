@@ -50,3 +50,49 @@ numbers will be far lower on the Neural Engine, but the *ratios* hold):
 General Photo 50.5s · Portrait 54.4s · Anime 16.7s · Fast & Clean 3.0s ·
 Anime Video 1.6s · Native 2× at 2× 15.9s (vs General Photo's 49.0s for the
 same 2× request).
+
+## Edge-energy calibration, 2026-09-22
+
+`ImageStatistics.edgeEnergy` and `UpscalerProvider.sharpnessScore` are the
+same measurement — mean **absolute** 3x3 Laplacian over a grayscale copy,
+0...255 — and `edge_stats.py` reproduces it here.
+
+The absolute value is the whole point. A Laplacian kernel sums to zero, so
+the *signed* mean of its response is ~0 for any image; measured across
+every test image it came out at ±0.0000. The previous implementation
+averaged the signed response through Core Image, which measures nothing
+unless some intermediate clamps the negative lobes away — and whether that
+happens depends on CIContext's working format, not on the photo.
+
+Reference values (256px center crop, the region Auto actually measures):
+
+| source | edge energy |
+|---|---|
+| dark concert poster | 1.3 |
+| ordinary photo | 4.2 |
+| 3D-render screenshot (trio closeup) | 9.0 |
+| 3D-render screenshot (trio standing) | 11.7 |
+| 3-panel line art | 13.1 |
+| game keyart | 14.1 |
+| dense HUNTRX poster | 26.2 |
+
+Model outputs, 320px crop at 4x:
+
+| model | face | fabric/text |
+|---|---|---|
+| plain resize (no model) | 1.27 | 1.48 |
+| General Photo | 4.01 | 4.26 |
+| Anime / Illustration | 3.71 | 4.44 |
+| Fast & Clean | 3.45 | 4.28 |
+| Anime Video | 3.33 | 3.87 |
+| Portrait | 2.18 | 2.86 |
+
+Two things follow. Scores land in roughly 1-5, so Auto's old fixed "+10 /
++12 / +15" content bonuses weren't breaking ties, they were overruling the
+measurement entirely — they're now fractions of the candidate's own score.
+And Anime Video sits within ~15% of the heavier anime model while costing
+about a tenth as much, which is why it takes the larger line-art nudge.
+
+These thresholds come from a handful of images on one Linux box. Auto now
+logs `auto_model_pick` with the measured stats and every candidate's score,
+so they can be re-calibrated from real photos on real devices.

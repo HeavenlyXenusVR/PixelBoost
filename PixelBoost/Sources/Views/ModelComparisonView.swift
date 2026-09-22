@@ -118,7 +118,7 @@ private struct ComparisonCard: View {
                         .pbAccentGlow(cornerRadius: 4)
                 }
             }
-            Text("Sharpness \(Int(result.sharpnessScore))")
+            Text("Sharpness \(String(format: "%.2f", result.sharpnessScore))")
                 .pbFont(.caption)
                 .foregroundStyle(PBColor.inkFaint)
 

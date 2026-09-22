@@ -590,7 +590,7 @@ final class UpscalerProvider: ObservableObject {
 
     /// Runs every bundled real model over one shared crop of `sourceImage`
     /// and keeps whichever produced the sharpest, most-detailed result,
-    /// with a content-aware bonus (see `contentAffinityBonus`) from real
+    /// with a content-aware nudge (see `contentAffinity`) from real
     /// pixel statistics of the *source* crop itself layered on top —
     /// used only by `BatchUpscaleViewModel`, where nobody is present to
     /// pick per photo across a queue of up to 20. Returns `nil` (caller
@@ -621,18 +621,42 @@ final class UpscalerProvider: ObservableObject {
         let contentStats = ImageStatistics.measure(testRegion)
 
         var best: (choice: UpscaleModelChoice, score: Double)?
+        var scored: [(UpscaleModelChoice, Double, Double)] = []
         for candidate in candidates {
             guard let upscaler = await resolvedModel(for: candidate, overlap: overlap) else { continue }
             guard let result = try? await upscaler.upscale(testRegion, progress: { _ in }) else { continue }
-            var score = Self.sharpnessScore(result.image)
+            let measured = Self.sharpnessScore(result.image)
+            // Affinities are proportions of the candidate's own measured
+            // score, not points added to it. As fixed point values they
+            // were silently deciding the whole pick: real scores on this
+            // metric land around 1-5, so a "+10 bonus" wasn't breaking a
+            // tie, it was overruling the measurement it was meant to
+            // supplement.
+            var affinity = Self.scaleAffinity(for: candidate, requestedScale: scaleFactor.rawValue)
             if let contentStats {
-                score += Self.contentAffinityBonus(for: candidate, stats: contentStats)
+                affinity += Self.contentAffinity(for: candidate, stats: contentStats)
             }
-            score += Self.scaleAffinityBonus(for: candidate, requestedScale: scaleFactor.rawValue)
+            let score = measured * (1 + affinity)
+            scored.append((candidate, measured, score))
             if best == nil || score > best!.score {
                 best = (candidate, score)
             }
         }
+
+        // The thresholds below are calibrated from a handful of images on
+        // one machine (see Models/testbench/README.md). Logging what was
+        // measured, and what every candidate scored, is what lets them be
+        // re-calibrated from real photos on real devices instead of
+        // re-guessed.
+        ActionLoggingService.log("auto_model_pick", detail: [
+            "chosen": best?.choice.rawValue,
+            "requested_scale": scaleFactor.rawValue,
+            "edge_energy": contentStats.map { round($0.edgeEnergy * 100) / 100 },
+            "channel_spread": contentStats.map { round($0.channelSpread * 1000) / 1000 },
+            "mean_luma": contentStats.map { round($0.meanLuma * 1000) / 1000 },
+            "scores": scored.map { "\($0.0.rawValue):\(round($0.1 * 100) / 100)->\(round($0.2 * 100) / 100)" }
+                .joined(separator: ","),
+        ], outcome: best == nil ? "failed" : "success")
         return best?.choice
     }
 
@@ -644,29 +668,58 @@ final class UpscalerProvider: ObservableObject {
     /// what's measured in the photo:
     ///
     /// - `.lowLight`: the source crop itself reads as genuinely dark.
-    /// - `.anime`/`.stylizedRender`: high edge density (hard line/edge
-    ///   structure) together with real color saturation (`channelSpread`)
-    ///   — the measurable signature of flat-color line art or toon
-    ///   shading, which a continuous-tone photo doesn't share.
+    /// - `.animeVideo`: dense hard edge structure — the strongest
+    ///   line-art signal, and the model that earns the largest nudge for
+    ///   it. On measured line-art content it lands within ~15% of the
+    ///   heavier anime model's edge energy while costing roughly a tenth
+    ///   as much (1.6s vs 16.7s for the same crop on the test bench,
+    ///   against 50s for General Photo), which matters a great deal now
+    ///   that Detail can hand a model 4-16x as many pixels as it used to
+    ///   get. On a close call for this kind of content, it should win.
+    /// - `.anime`/`.stylizedRender`: the same signature, smaller nudge.
     /// - `.textDocument`: near-grayscale (`channelSpread` close to 0)
     ///   with a very wide luminance range — a page of dark text on a
     ///   light background.
-    /// - `.animeVideo`: same line-art signature as `.anime` above.
     /// - everything else: no bonus: `.portrait`/`.generalPhoto`/`.render3D`
     ///   don't have a comparably distinct, reliably-measurable pixel
     ///   signature to key off of, so they're left to the sharpness trial
     ///   alone rather than a guess dressed up as a measurement.
-    private static func contentAffinityBonus(for choice: UpscaleModelChoice, stats: ImageStatistics) -> Double {
+    /// Returned as a *fraction* of the candidate's own measured score
+    /// (0.1 = +10%), never as points — see `autoSelectModel`.
+    ///
+    /// `lineArtEnergy` is on `ImageStatistics.edgeEnergy`'s 0...255 scale.
+    /// The previous threshold here read `edgeDensity > 20`, comparing a
+    /// 0...255-scale constant against a 0...1-scale value, so this branch
+    /// could never fire: the anime/toon affinity has never once applied
+    /// since it was written. Measured references are in
+    /// Models/testbench/README.md — an ordinary photo sits near 4, this
+    /// app's own render screenshots 9-13, a dense poster 26 — so the
+    /// threshold is deliberately low: it marks "has real line structure",
+    /// and the sharpness trial still decides the rest.
+    ///
+    /// The colour condition that used to accompany it
+    /// (`channelSpread > 0.12`) is gone: `channelSpread` is the spread of
+    /// the three channel *means*, which is near zero for a balanced
+    /// colourful image and large for one with a colour cast — it measures
+    /// tint, not saturation, so as a "this is colourful line art" test it
+    /// was wrong on its own terms. It still gates `.textDocument`, where
+    /// "no colour cast at all" is genuinely the signal.
+    private static let lineArtEnergy = 8.0
+
+    private static func contentAffinity(for choice: UpscaleModelChoice, stats: ImageStatistics) -> Double {
+        let isLineArt = stats.edgeEnergy > lineArtEnergy
         switch choice {
         case .lowLight:
-            return stats.meanLuma < 0.35 ? 12 : 0
-        case .anime, .stylizedRender, .animeVideo:
-            return (stats.edgeDensity > 20 && stats.channelSpread > 0.12) ? 10 : 0
+            return stats.meanLuma < 0.35 ? 0.10 : 0
+        case .animeVideo:
+            return isLineArt ? 0.14 : 0
+        case .anime, .stylizedRender:
+            return isLineArt ? 0.08 : 0
         case .textDocument:
-            return (stats.channelSpread < 0.05 && stats.maxLuma - stats.minLuma > 0.6) ? 15 : 0
-        // `.sharp2x` is deliberately not given a *content* bonus: what
+            return (stats.channelSpread < 0.05 && stats.maxLuma - stats.minLuma > 0.6) ? 0.12 : 0
+        // `.sharp2x` is deliberately not given a *content* affinity: what
         // makes it the right pick is the requested output scale, not
-        // anything measurable in the pixels — see `scaleAffinityBonus`.
+        // anything measurable in the pixels — see `scaleAffinity`.
         case .portrait, .generalPhoto, .render3D, .sharp2x, .auto:
             return 0
         }
@@ -675,11 +728,11 @@ final class UpscalerProvider: ObservableObject {
     /// The one preference that isn't about the photo's content at all: a
     /// model whose native ratio already matches the requested output scale
     /// delivers it directly, while a mismatched one has its output
-    /// resampled to get there (see `ScaledOutputUpscaler`). Sized like the
-    /// content bonuses above — enough to win a close call, not enough to
-    /// override a clearly sharper result.
-    private static func scaleAffinityBonus(for choice: UpscaleModelChoice, requestedScale: Int) -> Double {
-        choice.nativeScale == requestedScale ? 10 : 0
+    /// resampled to get there (see `ScaledOutputUpscaler`). A fraction of the
+    /// candidate's own score, like the content affinities above — enough
+    /// to win a close call, not to override a clearly sharper result.
+    private static func scaleAffinity(for choice: UpscaleModelChoice, requestedScale: Int) -> Double {
+        choice.nativeScale == requestedScale ? 0.08 : 0
     }
 
     /// A center crop, not a resize — auto-selection needs to see the model
@@ -709,36 +762,11 @@ final class UpscalerProvider: ObservableObject {
     /// here to compare candidate models instead of camera lens positions.
     /// Not `private` — `UpscalerViewModel.compareModels()` reuses it to
     /// show a sharpness figure alongside each full comparison result too.
+    /// How much hard edge detail a candidate's output actually carries,
+    /// 0...255 — mean absolute Laplacian, the same measurement
+    /// `ImageStatistics.edgeEnergy` makes of a source, so a source's
+    /// reading and a candidate's score are directly comparable.
     static func sharpnessScore(_ image: UIImage) -> Double {
-        guard let cgImage = image.cgImage else { return 0 }
-        let ciImage = CIImage(cgImage: cgImage)
-
-        guard let grayscale = CIFilter(name: "CIColorControls") else { return 0 }
-        grayscale.setValue(ciImage, forKey: kCIInputImageKey)
-        grayscale.setValue(0.0, forKey: kCIInputSaturationKey)
-        guard let grayImage = grayscale.outputImage else { return 0 }
-
-        guard let laplacian = CIFilter(name: "CIConvolution3X3") else { return 0 }
-        laplacian.setValue(grayImage, forKey: kCIInputImageKey)
-        laplacian.setValue(CIVector(values: [0, -1, 0, -1, 4, -1, 0, -1, 0], count: 9), forKey: "inputWeights")
-        laplacian.setValue(0.0, forKey: "inputBias")
-        guard let edges = laplacian.outputImage else { return 0 }
-
-        guard let averageFilter = CIFilter(name: "CIAreaAverage") else { return 0 }
-        averageFilter.setValue(edges, forKey: kCIInputImageKey)
-        averageFilter.setValue(CIVector(cgRect: edges.extent), forKey: "inputExtent")
-        guard let averaged = averageFilter.outputImage else { return 0 }
-
-        var pixel = [UInt8](repeating: 0, count: 4)
-        // Color management disabled for the same reason as
-        // CoreMLTileUpscaler's own context: this reads a raw intensity
-        // value, not a display-ready color, so gamma/profile handling would
-        // only distort the score.
-        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
-        context.render(
-            averaged, toBitmap: &pixel, rowBytes: 4,
-            bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8, colorSpace: nil
-        )
-        return (Double(pixel[0]) + Double(pixel[1]) + Double(pixel[2])) / 3.0
+        ImageStatistics.edgeEnergy(of: image)
     }
 }
