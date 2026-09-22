@@ -628,6 +628,7 @@ final class UpscalerProvider: ObservableObject {
             if let contentStats {
                 score += Self.contentAffinityBonus(for: candidate, stats: contentStats)
             }
+            score += Self.scaleAffinityBonus(for: candidate, requestedScale: scaleFactor.rawValue)
             if best == nil || score > best!.score {
                 best = (candidate, score)
             }
@@ -650,6 +651,7 @@ final class UpscalerProvider: ObservableObject {
     /// - `.textDocument`: near-grayscale (`channelSpread` close to 0)
     ///   with a very wide luminance range — a page of dark text on a
     ///   light background.
+    /// - `.animeVideo`: same line-art signature as `.anime` above.
     /// - everything else: no bonus: `.portrait`/`.generalPhoto`/`.render3D`
     ///   don't have a comparably distinct, reliably-measurable pixel
     ///   signature to key off of, so they're left to the sharpness trial
@@ -658,13 +660,26 @@ final class UpscalerProvider: ObservableObject {
         switch choice {
         case .lowLight:
             return stats.meanLuma < 0.35 ? 12 : 0
-        case .anime, .stylizedRender:
+        case .anime, .stylizedRender, .animeVideo:
             return (stats.edgeDensity > 20 && stats.channelSpread > 0.12) ? 10 : 0
         case .textDocument:
             return (stats.channelSpread < 0.05 && stats.maxLuma - stats.minLuma > 0.6) ? 15 : 0
-        case .portrait, .generalPhoto, .render3D, .auto:
+        // `.sharp2x` is deliberately not given a *content* bonus: what
+        // makes it the right pick is the requested output scale, not
+        // anything measurable in the pixels — see `scaleAffinityBonus`.
+        case .portrait, .generalPhoto, .render3D, .sharp2x, .auto:
             return 0
         }
+    }
+
+    /// The one preference that isn't about the photo's content at all: a
+    /// model whose native ratio already matches the requested output scale
+    /// delivers it directly, while a mismatched one has its output
+    /// resampled to get there (see `ScaledOutputUpscaler`). Sized like the
+    /// content bonuses above — enough to win a close call, not enough to
+    /// override a clearly sharper result.
+    private static func scaleAffinityBonus(for choice: UpscaleModelChoice, requestedScale: Int) -> Double {
+        choice.nativeScale == requestedScale ? 10 : 0
     }
 
     /// A center crop, not a resize — auto-selection needs to see the model
