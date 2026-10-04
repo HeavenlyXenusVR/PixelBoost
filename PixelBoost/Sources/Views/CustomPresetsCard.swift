@@ -97,15 +97,31 @@ struct CustomPresetsCard: View {
 
     private func delete(_ preset: CustomPreset) {
         presets.removeAll { $0.id == preset.id }
+        // The model/overlap combination, not the user's chosen name — the
+        // name is free text they typed and has no analytical value, while
+        // which combinations get kept and which get thrown away does.
+        ActionLoggingService.log("custom_preset_delete", detail: [
+            "model": preset.model_name,
+            "overlap": preset.overlap,
+        ])
         Task { try? await CustomPresetService.delete(id: preset.id) }
     }
 
     private func create(name: String, modelName: String, overlap: Int) async {
         do {
             _ = try await CustomPresetService.save(name: name, modelName: modelName, overlap: overlap)
+            ActionLoggingService.log("custom_preset_create", detail: [
+                "model": modelName,
+                "overlap": overlap,
+            ], outcome: "success")
             await load()
         } catch {
             errorMessage = error.localizedDescription
+            ActionLoggingService.log("custom_preset_create", detail: [
+                "model": modelName,
+                "overlap": overlap,
+                "error": error.localizedDescription,
+            ], outcome: "failed")
         }
     }
 }

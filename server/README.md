@@ -48,6 +48,62 @@ statement was actually exercised, not just reviewed for syntax.
   rather than tied to any one action
 - `GET /log/snapshots?device_id=...&limit=&offset=`
 
+**Per-model comparison telemetry**
+- `POST /log/comparison` — one Compare Models / Auto sweep: every model that
+  ran side by side on the same photo, plus a `model_comparison_candidates`
+  row each (score, timing, fidelity, tile reuse, error). The candidate runs
+  are *also* in `upscale_history`, tagged with the same `comparison_id` and
+  `run_kind='compare'`. Upserts on `comparison_id` (the client generates it
+  up front so each candidate's history row can carry it), and replaces the
+  sweep's candidate rows rather than appending, so a retry can't duplicate
+  them.
+- `POST /log/comparison/{comparison_id}/pick` — which result the user
+  actually chose (`{"model_name": "..."}`). Posted separately because the
+  choice happens later, in `ModelComparisonView`, and may never happen at
+  all — a sweep with a NULL `picked_model` means every model's output was
+  rejected, which is worth being able to count. 404 if the sweep was never
+  posted.
+- `GET /log/comparisons?device_id=&limit=&offset=` — sweeps with their
+  candidates nested.
+
+This exists because the user's pick is the only non-proxy signal this app
+has about model quality: `sharpness_score` is a heuristic standing in for
+"looks better", and a human choosing one of six results they can all see is
+the actual answer. `model_comparisons.auto_pick_model` stores the app's own
+ranking winner next to it, so the two can be compared directly — if they
+disagree often, the ranking is not measuring what people prefer.
+
+**Cross-device overview**
+- `GET /log/overview?days=` (1-90, default 7) — fleet-wide health,
+  aggregated across every device: totals, per-`run_kind`/per-model timing
+  (p95 included) and failure counts, per-app-version rollup, top errors,
+  action/outcome counts, the model-pick table above, auto-pick agreement
+  rate, and thermal-state distribution.
+
+  Every other read endpoint here is scoped to a single `device_id`, and
+  there's no way to enumerate device ids — so until this existed, all of
+  this telemetry was being collected and was effectively unreadable in
+  aggregate: answering "is any model failing?" or "did the last release
+  regress timing?" required already knowing which device to ask. It
+  deliberately returns no `device_id` values and no per-device rows, only
+  counts and distributions; `/log/history?device_id=` is still the way to
+  look at one install you already know.
+
+`upscale_history` also carries `run_kind` ('single' | 'batch' | 'compare' |
+'intent'), which closes a real hole in every aggregate over this table:
+Auto mode and Compare Models run *every* bundled model over the full photo,
+and each of those candidate runs used to land here looking exactly like a
+deliberate single upscale — so `success_rate`, `avg_processing_ms` and any
+per-model timing silently mixed one requested run in with a six-model sweep
+the user never asked for individually. `was_batch` is kept and still set
+alongside it. Also added: `fidelity_psnr`, `tiles_reused` and
+`output_was_capped` (all three were already being computed per run on the
+client and then discarded at the log boundary — see `UpscaleResult`),
+`render_denoise_applied` (whether the pass actually *ran*, not whether it
+was requested — it's best-effort and falls back silently),
+`source_noise_sigma` (the measurement that decided it, so a badly-set
+threshold is visible rather than just its consequences), and `free_disk_mb`.
+
 `upscale_history` also carries per-run context beyond the original
 dimensions/timing columns: `detail_level`, `model_input_width/height` (what
 the model actually saw, after any detail-budget downscale — the column that

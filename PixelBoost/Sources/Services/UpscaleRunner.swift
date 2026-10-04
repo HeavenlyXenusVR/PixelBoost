@@ -57,6 +57,9 @@ enum UpscaleRunner {
         detailLevel: String? = nil,
         requestedScale: Int? = nil,
         isBatch: Bool = false,
+        runKind: String? = nil,
+        comparisonID: String? = nil,
+        sourceNoiseSigma: Double? = nil,
         session: UpscaleSession? = nil,
         progress: @escaping (Double) -> Void
     ) async -> Outcome {
@@ -67,16 +70,28 @@ enum UpscaleRunner {
         // without any data on.
         let thermalStateStart = TelemetryService.thermalStateName
         let context = TelemetryService.context
+        var upscalerInput = denoiseAmount > 0 ? RestoreService.denoise(sourceImage, amount: denoiseAmount) : sourceImage
+        // Whether the pass was *requested* and whether it actually ran are
+        // different facts: it's deliberately best-effort and falls back to
+        // the undenoised image on any failure. Logging the request would
+        // have made a model that silently never got its pre-cleaned input
+        // look like one that did.
+        var renderDenoiseApplied = false
+        if autoRenderDenoise {
+            if let denoised = try? await RenderDenoiseService.denoise(upscalerInput, progress: { _ in }) {
+                upscalerInput = denoised
+                renderDenoiseApplied = true
+            }
+        }
         let settings = RunSettings(
             detailLevel: detailLevel, requestedScale: requestedScale,
             strength: blendAmount, antiAliasing: antiAliasingAmount,
             sharpen: sharpenAmount, denoiseBefore: denoiseAmount > 0 || autoRenderDenoise,
-            isBatch: isBatch, thermalStateStart: thermalStateStart, context: context
+            isBatch: isBatch, thermalStateStart: thermalStateStart, context: context,
+            runKind: runKind ?? (isBatch ? "batch" : "single"),
+            comparisonID: comparisonID, sourceNoiseSigma: sourceNoiseSigma,
+            renderDenoiseApplied: autoRenderDenoise ? renderDenoiseApplied : nil
         )
-        var upscalerInput = denoiseAmount > 0 ? RestoreService.denoise(sourceImage, amount: denoiseAmount) : sourceImage
-        if autoRenderDenoise {
-            upscalerInput = (try? await RenderDenoiseService.denoise(upscalerInput) { _ in }) ?? upscalerInput
-        }
         do {
             var result = try await upscaler.upscale(upscalerInput, session: session, progress: progress)
             if blendAmount < 1.0 {
@@ -91,7 +106,7 @@ enum UpscaleRunner {
             log(
                 upscaler: upscaler, sourceImage: sourceImage, sourceFileSizeBytes: sourceFileSizeBytes,
                 outputImage: result.image, tileCount: result.tileCount, startedAt: startedAt, error: nil,
-                modelInputSize: result.modelInputSize, settings: settings
+                modelInputSize: result.modelInputSize, result: result, settings: settings
             )
             // Feeds the Home Screen widget (see UpscaleSnapshot) — every
             // successful run through this shared function, single-image or
@@ -102,7 +117,7 @@ enum UpscaleRunner {
             log(
                 upscaler: upscaler, sourceImage: sourceImage, sourceFileSizeBytes: sourceFileSizeBytes,
                 outputImage: nil, tileCount: nil, startedAt: startedAt, error: error,
-                modelInputSize: nil, settings: settings
+                modelInputSize: nil, result: nil, settings: settings
             )
             return Outcome(result: nil, error: error)
         }
@@ -169,12 +184,18 @@ enum UpscaleRunner {
         let isBatch: Bool
         let thermalStateStart: String
         let context: TelemetryService.Context
+        let runKind: String
+        let comparisonID: String?
+        let sourceNoiseSigma: Double?
+        /// `nil` when no render-denoise pass was requested at all, which
+        /// is a different fact from "requested and it failed" (false).
+        let renderDenoiseApplied: Bool?
     }
 
     private static func log(
         upscaler: ImageUpscaling, sourceImage: UIImage, sourceFileSizeBytes: Int?,
         outputImage: UIImage?, tileCount: Int?, startedAt: Date, error: Error?,
-        modelInputSize: CGSize?, settings: RunSettings
+        modelInputSize: CGSize?, result: UpscaleResult?, settings: RunSettings
     ) {
         let info = upscaler.techniqueInfo
         let entry = UpscaleLogEntry(
@@ -211,7 +232,15 @@ enum UpscaleRunner {
             low_power_mode: settings.context.lowPowerMode,
             battery_level: settings.context.batteryLevel,
             physical_memory_mb: settings.context.physicalMemoryMB,
-            peak_memory_mb: TelemetryService.usedMemoryMB
+            peak_memory_mb: TelemetryService.usedMemoryMB,
+            run_kind: settings.runKind,
+            comparison_id: settings.comparisonID,
+            fidelity_psnr: result?.fidelityPSNR,
+            tiles_reused: result?.tilesReused,
+            output_was_capped: result?.outputWasCapped,
+            render_denoise_applied: settings.renderDenoiseApplied,
+            source_noise_sigma: settings.sourceNoiseSigma,
+            free_disk_mb: settings.context.freeDiskMB
         )
         // Metadata (timing/dimensions/success) is the always-on debug
         // telemetry described in the README — off only if the user turns

@@ -30,7 +30,13 @@ struct ModelComparisonView: View {
                         ForEach(results) { result in
                             ComparisonCard(
                                 result: result, isSharpest: result.sharpnessScore == bestScore,
-                                onTapImage: { zoomedResult = result },
+                                onTapImage: {
+                                    ActionLoggingService.log("comparison_zoom", detail: [
+                                        "model": result.choice.rawValue,
+                                        "is_sharpest": result.sharpnessScore == bestScore,
+                                    ])
+                                    zoomedResult = result
+                                },
                                 onUseThis: { onPick(result); dismiss() }
                             )
                         }
@@ -45,10 +51,23 @@ struct ModelComparisonView: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        // Backing out without choosing is a real outcome,
+                        // not an absence of one: a sweep nobody picked from
+                        // means every model's result was rejected, which is
+                        // the single most interesting thing a comparison
+                        // can report and used to leave no trace at all.
+                        ActionLoggingService.log("comparison_dismissed", detail: [
+                            "result_count": results.count,
+                        ], outcome: "cancelled")
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
+                        ActionLoggingService.log("comparison_save_all", detail: [
+                            "result_count": results.count,
+                        ])
                         onSaveAll()
                     } label: {
                         Label("Save All", systemImage: "square.and.arrow.down")

@@ -1,17 +1,20 @@
 import SwiftUI
 
-/// Two modes: "Everything" (the original, still-default behavior — a
-/// single unattended action cutting out every detected subject at once)
-/// and "Tap to Select" (pick one specific subject by tapping it — see
-/// `BackgroundRemovalService`'s "Tap to Select" section). Writes straight
-/// to `viewModel.resultImage`, same as every other tool.
+/// Three modes: "Everything" (the original, still-default behavior — a
+/// single unattended action cutting out every detected subject at once),
+/// "Tap to Select" (pick one specific subject by tapping it — see
+/// `BackgroundRemovalService`'s "Tap to Select" section), and "Touch Up"
+/// (brush the result by hand where Vision got it wrong — see
+/// `CutoutRefineService`). Writes straight to `viewModel.resultImage`,
+/// same as every other tool.
 private enum CutoutMode: String, CaseIterable, Identifiable {
-    case auto, tapToSelect
+    case auto, tapToSelect, touchUp
     var id: String { rawValue }
     var title: String {
         switch self {
         case .auto: return "Everything"
         case .tapToSelect: return "Tap to Select"
+        case .touchUp: return "Touch Up"
         }
     }
 }
@@ -35,6 +38,18 @@ struct CutoutTabView: View {
     @State private var isProcessingTapPreview = false
     @State private var tapErrorMessage: String?
 
+    // Touch Up — manual brush repair of a cutout Vision got wrong. Same
+    // stroke/mask plumbing as Erase and Selective Adjustments
+    // (`BrushStroke`/`BrushMask`), with a polarity picker for whether a
+    // stroke restores the original's pixels or clears to transparent.
+    @State private var touchUpBrush: CutoutRefineService.Brush = .restore
+    @State private var strokes: [BrushStroke] = []
+    @State private var currentPoints: [CGPoint] = []
+    @State private var brushSize: CGFloat = 36
+    @State private var canvasSize: CGSize = .zero
+    @State private var isRefining = false
+    @State private var touchUpErrorMessage: String?
+
     private var currentImage: UIImage? {
         viewModel.resultImage ?? viewModel.sourceImage
     }
@@ -56,12 +71,14 @@ struct CutoutTabView: View {
                         .pickerStyle(.segmented)
                         .onChange(of: mode) { _, newMode in
                             if newMode == .tapToSelect { startDetection(currentImage) }
+                            clearStrokes()
+                            ActionLoggingService.log("cutout_mode", detail: ["mode": newMode.rawValue])
                         }
 
-                        if mode == .auto {
-                            autoModeContent(currentImage)
-                        } else {
-                            tapToSelectContent(currentImage)
+                        switch mode {
+                        case .auto: autoModeContent(currentImage)
+                        case .tapToSelect: tapToSelectContent(currentImage)
+                        case .touchUp: touchUpContent(currentImage)
                         }
 
                         if currentImage.hasAlphaChannel {
@@ -81,6 +98,8 @@ struct CutoutTabView: View {
                 selectedInstance = nil
                 tapPreview = nil
                 tapErrorMessage = nil
+                clearStrokes()
+                touchUpErrorMessage = nil
                 if mode == .tapToSelect, let currentImage {
                     startDetection(currentImage)
                 }
@@ -192,6 +211,208 @@ struct CutoutTabView: View {
             }
             .buttonStyle(.pbGradient)
             .disabled(isProcessingTapPreview)
+        }
+    }
+
+    /// Hand repair for a cutout the Vision matte got wrong — paint to
+    /// bring the original photo's pixels back (a clipped arm, a strand of
+    /// hair) or to clear background it wrongly kept. Only useful on an
+    /// image that actually has transparency, so on an opaque photo this
+    /// says so rather than offering a brush whose every stroke would be a
+    /// no-op.
+    @ViewBuilder
+    private func touchUpContent(_ currentImage: UIImage) -> some View {
+        if !currentImage.hasAlphaChannel {
+            VStack(spacing: 10) {
+                Image(systemName: "paintbrush.pointed")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(PBColor.inkFaint)
+                Text("Nothing to touch up yet — run Remove Background or Tap to Select first, then come back here to fix anything it got wrong.")
+                    .pbFont(.body)
+                    .foregroundStyle(PBColor.inkDim)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.vertical, 40)
+        } else {
+            PBImageFrame {
+                GeometryReader { geo in
+                    // `PBImageFrame` already lays a transparency
+                    // checkerboard under its content, so a region the
+                    // brush clears reads as transparent rather than as
+                    // whatever the surface color happens to be.
+                    ZStack {
+                        Image(uiImage: currentImage)
+                            .resizable()
+                            .frame(width: geo.size.width, height: geo.size.height)
+
+                        Canvas { context, _ in
+                            for stroke in strokes {
+                                drawStroke(stroke.points, brushSize: stroke.brushSize, in: &context)
+                            }
+                            if !currentPoints.isEmpty {
+                                drawStroke(currentPoints, brushSize: brushSize, in: &context)
+                            }
+                        }
+                        .allowsHitTesting(false)
+                    }
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(!isRefining)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in currentPoints.append(value.location) }
+                            .onEnded { _ in
+                                if !currentPoints.isEmpty {
+                                    strokes.append(BrushStroke(points: currentPoints, brushSize: brushSize))
+                                }
+                                currentPoints = []
+                            }
+                    )
+                    .onAppear { canvasSize = geo.size }
+                    .onChange(of: geo.size) { _, newSize in canvasSize = newSize }
+                }
+            }
+            // Container matched to the image's own aspect ratio, so
+            // `BrushMask`'s single uniform canvas-to-pixel scale factor
+            // holds with no letterboxing to correct for — the same
+            // requirement InpaintView's canvas has.
+            .aspectRatio(currentImage.size, contentMode: .fit)
+            .frame(maxHeight: 340)
+
+            Picker("Brush", selection: $touchUpBrush) {
+                Text("Restore").tag(CutoutRefineService.Brush.restore)
+                Text("Erase").tag(CutoutRefineService.Brush.erase)
+            }
+            .pickerStyle(.segmented)
+            .disabled(isRefining)
+
+            Text(touchUpBrush == .restore
+                ? "Paint over a part of the subject the cutout wrongly removed to bring it back from the original photo."
+                : "Paint over background the cutout wrongly kept to clear it to transparent.")
+                .pbFont(.caption)
+                .foregroundStyle(PBColor.inkFaint)
+                .multilineTextAlignment(.center)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Brush Size")
+                    .pbFont(.eyebrow)
+                    .foregroundStyle(PBColor.inkFaint)
+                Slider(value: $brushSize, in: 12...80)
+                    .tint(PBColor.accent)
+                    .disabled(isRefining)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    Haptics.lightImpact()
+                    strokes.removeLast()
+                } label: {
+                    Label("Undo", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(.pbGhost)
+                .disabled(strokes.isEmpty || isRefining)
+
+                Button {
+                    Haptics.lightImpact()
+                    clearStrokes()
+                } label: {
+                    Label("Clear", systemImage: "xmark.circle")
+                }
+                .buttonStyle(.pbGhost)
+                .disabled(strokes.isEmpty || isRefining)
+            }
+
+            Button {
+                Haptics.lightImpact()
+                applyTouchUp(to: currentImage)
+            } label: {
+                Label(isRefining ? "Applying…" : "Apply Brush", systemImage: "checkmark")
+            }
+            .buttonStyle(.pbGradient)
+            .disabled(strokes.isEmpty || isRefining)
+
+            if let touchUpErrorMessage {
+                Text(touchUpErrorMessage)
+                    .pbFont(.caption)
+                    .foregroundStyle(PBColor.bad)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    private func drawStroke(_ points: [CGPoint], brushSize: CGFloat, in context: inout GraphicsContext) {
+        guard let first = points.first else { return }
+        var path = Path()
+        path.move(to: first)
+        for point in points.dropFirst() {
+            path.addLine(to: point)
+        }
+        // Green for restore, red for erase — the stroke overlay should say
+        // which direction it is going to push, since the two are painted
+        // identically otherwise.
+        context.stroke(
+            path,
+            with: .color((touchUpBrush == .restore ? Color.green : Color.red).opacity(0.45)),
+            style: StrokeStyle(lineWidth: brushSize, lineCap: .round, lineJoin: .round)
+        )
+    }
+
+    private func clearStrokes() {
+        strokes = []
+        currentPoints = []
+    }
+
+    /// Rasterizes the painted strokes and composites them onto the current
+    /// cutout. Writing to `viewModel.resultImage` bumps `imageVersion`,
+    /// which clears the strokes via `pbRefresh` — they are baked in by
+    /// then, same as Erase.
+    private func applyTouchUp(to currentImage: UIImage) {
+        guard !strokes.isEmpty, canvasSize.width > 0, canvasSize.height > 0 else { return }
+        let mask = BrushMask.rasterize(strokes, canvasSize: canvasSize, pixelSize: currentImage.size)
+        let original = viewModel.sourceImage
+        let brush = touchUpBrush
+        let strokeCount = strokes.count
+        isRefining = true
+        touchUpErrorMessage = nil
+        let startedAt = Date()
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                CutoutRefineService.refine(currentImage, original: original, mask: mask, brush: brush)
+            }.value
+            let durationMS = Int(Date().timeIntervalSince(startedAt) * 1000)
+            if let result {
+                viewModel.resultImage = result
+                Haptics.success()
+                ActionLoggingService.log(
+                    "cutout_touch_up",
+                    detail: [
+                        "brush": brush == .restore ? "restore" : "erase",
+                        "strokes": strokeCount,
+                        "brush_size": Double(brushSize),
+                        "had_original": original != nil,
+                    ],
+                    outcome: "success",
+                    durationMS: durationMS
+                )
+            } else {
+                // The one expected failure is Restore with no original to
+                // read from — say that specifically instead of a generic
+                // "didn't work", since it is the user's situation to fix.
+                touchUpErrorMessage = brush == .restore && original == nil
+                    ? "The original photo isn't available to restore from — reload the photo and try again."
+                    : "Couldn't apply the brush to this image."
+                Haptics.error()
+                ActionLoggingService.log(
+                    "cutout_touch_up",
+                    detail: [
+                        "brush": brush == .restore ? "restore" : "erase",
+                        "strokes": strokeCount,
+                        "had_original": original != nil,
+                    ],
+                    outcome: "failed",
+                    durationMS: durationMS
+                )
+            }
+            isRefining = false
         }
     }
 

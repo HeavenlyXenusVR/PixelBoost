@@ -35,6 +35,11 @@ struct UpscalePhotoIntent: AppIntent {
         let outcome = await UpscaleRunner.run(
             sourceImage, using: upscaler, sourceFileSizeBytes: photo.data.count,
             requestedScale: 4,
+            // Its own run_kind rather than 'single': a Shortcuts run is
+            // unattended and deliberately on the efficiency path below, so
+            // folding its timings into interactive single upscales would
+            // make the interactive path look slower than it is.
+            runKind: "intent",
             // Shortcuts runs unattended, often in the background: keep it
             // on the most battery-friendly path.
             session: UpscaleSession(power: .efficiency, fidelity: .natural)

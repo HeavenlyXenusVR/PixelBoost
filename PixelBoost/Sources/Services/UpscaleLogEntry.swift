@@ -45,4 +45,26 @@ struct UpscaleLogEntry: Encodable {
     var battery_level: Double? = nil
     var physical_memory_mb: Int? = nil
     var peak_memory_mb: Int? = nil
+    // Per-model run telemetry (see server/schema.sql's 2026-10-04 section).
+    /// 'single' | 'batch' | 'compare' | 'live'. Auto mode and Compare
+    /// Models run every bundled model over the full photo, and each of
+    /// those candidate runs used to land here looking exactly like a
+    /// deliberate single upscale — so every per-model aggregate mixed one
+    /// requested run in with a whole sweep the user never asked for
+    /// individually. `was_batch` is still set alongside this.
+    var run_kind: String? = nil
+    /// Set on compare/auto-sweep rows, joining them to the
+    /// `model_comparisons` row for the sweep they belong to.
+    var comparison_id: String? = nil
+    /// From `UpscaleResult` — all four were already being computed per run
+    /// and then discarded at the log boundary.
+    var fidelity_psnr: Double? = nil
+    var tiles_reused: Int? = nil
+    var output_was_capped: Bool? = nil
+    var render_denoise_applied: Bool? = nil
+    /// The estimated noise level that decided whether the render-denoise
+    /// pass ran — without it, `render_denoise_applied` records what
+    /// happened but not why, so a badly-set threshold stays invisible.
+    var source_noise_sigma: Double? = nil
+    var free_disk_mb: Int? = nil
 }

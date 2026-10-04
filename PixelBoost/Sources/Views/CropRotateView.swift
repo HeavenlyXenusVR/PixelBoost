@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Fixed-aspect-ratio crop — pick a ratio, drag the resulting window to
-/// reposition — plus 90-degree rotate. Deliberately no corner-resize
+/// reposition — plus 90-degree rotate and horizontal/vertical flip.
+/// Deliberately no corner-resize
 /// handles or free-angle straighten: that gesture math is easy to get
 /// subtly wrong, and there's no way to visually verify it in this
 /// environment, so this stays with the simpler, lower-risk version (a
@@ -53,6 +54,8 @@ struct CropRotateView: View {
                         HStack(spacing: 10) {
                             toolButton("rotate.left") { rotate(clockwise: false) }
                             toolButton("rotate.right") { rotate(clockwise: true) }
+                            toolButton("arrow.left.and.right.righttriangle.left.righttriangle.right") { flip(horizontal: true) }
+                            toolButton("arrow.up.and.down.righttriangle.up.righttriangle.down") { flip(horizontal: false) }
                         }
 
                         ratioChipsRow
@@ -166,6 +169,20 @@ struct CropRotateView: View {
             .onEnded { _ in dragStartOrigin = nil }
     }
 
+    /// Unlike `rotate`, a flip leaves the image's dimensions alone, so a
+    /// picked ratio and its crop window both stay valid — the window now
+    /// frames the mirrored region, which is what you'd expect from
+    /// flipping under a fixed selection.
+    private func flip(horizontal: Bool) {
+        guard let workingImage else { return }
+        Haptics.lightImpact()
+        self.workingImage = horizontal
+            ? ImageTransform.flippedHorizontally(workingImage)
+            : ImageTransform.flippedVertically(workingImage)
+        hasChanges = true
+        ActionLoggingService.log("crop_rotate_flip", detail: ["axis": horizontal ? "horizontal" : "vertical"])
+    }
+
     private func rotate(clockwise: Bool) {
         guard let workingImage else { return }
         self.workingImage = ImageTransform.rotated90(workingImage, clockwise: clockwise)
@@ -174,6 +191,7 @@ struct CropRotateView: View {
         // Free and let the user re-pick a ratio against the new shape.
         selectedRatio = nil
         hasChanges = true
+        ActionLoggingService.log("crop_rotate_rotate", detail: ["clockwise": clockwise])
     }
 
     /// Converts `cropRect` from on-screen display coordinates back to

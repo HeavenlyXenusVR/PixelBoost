@@ -50,6 +50,7 @@ struct AutoEnhanceView: View {
                                 HStack(spacing: 10) {
                                     Button {
                                         Haptics.lightImpact()
+                                        ActionLoggingService.log("auto_enhance_discard")
                                         enhancedPreview = nil
                                     } label: {
                                         Label("Discard", systemImage: "xmark")
@@ -100,12 +101,22 @@ struct AutoEnhanceView: View {
         guard let baseImage else { return }
         isAnalyzing = true
         let preview = Self.downscaled(baseImage, maxDimension: 900)
+        let startedAt = Date()
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 AutoEnhanceService.enhance(preview)
             }.value
             enhancedPreview = result
             isAnalyzing = false
+            ActionLoggingService.log(
+                "auto_enhance_preview",
+                detail: [
+                    "source_width": Int(baseImage.size.width),
+                    "source_height": Int(baseImage.size.height),
+                ],
+                outcome: "success",
+                durationMS: Int(Date().timeIntervalSince(startedAt) * 1000)
+            )
         }
     }
 
@@ -114,11 +125,25 @@ struct AutoEnhanceView: View {
     /// `refreshFromCurrentImage()`, clearing the preview on its own.
     private func apply() {
         guard let baseImage else { return }
+        let startedAt = Date()
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 AutoEnhanceService.enhance(baseImage)
             }.value
             viewModel.resultImage = result
+            // The preview/apply pair is logged separately on purpose: how
+            // often a previewed enhance is then discarded rather than
+            // applied is the signal for whether this tool's output is
+            // actually wanted.
+            ActionLoggingService.log(
+                "auto_enhance_apply",
+                detail: [
+                    "source_width": Int(baseImage.size.width),
+                    "source_height": Int(baseImage.size.height),
+                ],
+                outcome: "success",
+                durationMS: Int(Date().timeIntervalSince(startedAt) * 1000)
+            )
         }
     }
 

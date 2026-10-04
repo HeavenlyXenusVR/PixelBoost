@@ -251,3 +251,110 @@ ALTER TABLE image_exports ADD COLUMN IF NOT EXISTS is_auto BOOLEAN DEFAULT FALSE
 ALTER TABLE image_exports ADD COLUMN IF NOT EXISTS label VARCHAR(120);
 ALTER TABLE image_imports ADD COLUMN IF NOT EXISTS is_auto BOOLEAN DEFAULT FALSE;
 ALTER TABLE image_imports ADD COLUMN IF NOT EXISTS label VARCHAR(120);
+
+-- ---------------------------------------------------------------------------
+-- Per-model run telemetry (added 2026-10-04)
+-- ---------------------------------------------------------------------------
+--
+-- `run_kind` is the column that was most conspicuously missing: Auto mode
+-- and Compare Models both run EVERY bundled model over the full photo, and
+-- each of those candidate runs went into upscale_history as a row
+-- indistinguishable from a deliberate single upscale. So every aggregate
+-- over this table — success_rate, avg_processing_ms, per-model timing —
+-- silently mixed one user-requested upscale in with six sweep runs the user
+-- never asked for individually, which both drowns the real signal and makes
+-- a slow model look slow in a context nobody cares about. 'single' |
+-- 'batch' | 'compare' | 'live'. `was_batch` is kept and still set for
+-- compatibility with existing rows and queries.
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS run_kind VARCHAR(20);
+-- Set on compare/auto-sweep rows, joining them to the model_comparisons row
+-- below so one sweep's candidate runs can be pulled back out together.
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS comparison_id VARCHAR(36);
+-- These four were already being computed per run on the client and then
+-- thrown away (see UpscaleResult) — the fidelity pass reports its PSNR, the
+-- duplicate-tile cache counts its hits, and the memory guard records when it
+-- had to shrink the output. All three are exactly the "what did this run
+-- actually do" signal the log was missing.
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS fidelity_psnr REAL;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS tiles_reused INT;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS output_was_capped BOOLEAN;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS render_denoise_applied BOOLEAN;
+-- The estimated noise level that DECIDED whether the render-denoise pass
+-- ran at all. Without it, `render_denoise_applied` says what happened but
+-- not why, so a bad threshold is invisible.
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS source_noise_sigma REAL;
+ALTER TABLE upscale_history ADD COLUMN IF NOT EXISTS free_disk_mb INT;
+CREATE INDEX IF NOT EXISTS idx_history_run_kind ON upscale_history (run_kind, model_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_history_comparison ON upscale_history (comparison_id);
+
+-- One row per Compare Models / Auto sweep. The individual candidate runs
+-- still land in upscale_history (joined via comparison_id); this table is
+-- the sweep itself — what was compared, what the heuristic picked, and,
+-- crucially, what the USER picked afterwards.
+--
+-- That last column is the only ground truth this app has about model
+-- quality. Every other signal is a proxy: sharpness_score is a heuristic,
+-- and the "is this model any good" question was previously answerable only
+-- by guessing. Which result a human chose when shown all of them side by
+-- side is the actual answer, and it was not being recorded anywhere.
+--
+-- Unlike upscale_history this table is NOT append-only — picked_model is
+-- filled in later, when the user taps a result in ModelComparisonView
+-- (which can be well after the sweep finished, or never, if they back out
+-- without choosing; a NULL picked_model with a non-NULL finished_at is
+-- itself a meaningful outcome worth being able to count).
+CREATE TABLE IF NOT EXISTS model_comparisons (
+    comparison_id VARCHAR(36) PRIMARY KEY,
+    device_id VARCHAR(64) NOT NULL,
+    session_id VARCHAR(36),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    source_width INT,
+    source_height INT,
+    candidate_count INT,
+    succeeded_count INT,
+    cancelled BOOLEAN DEFAULT FALSE,
+    total_ms INT,
+    -- The app's own ranking winner, stored next to the user's actual pick
+    -- so the two can be compared directly. For an interactive Compare
+    -- Models sweep this is the highest-sharpness_score candidate (the
+    -- metric the comparison UI itself ranks and badges on); for a batch
+    -- auto-pick it is the content-affinity heuristic's choice (see
+    -- UpscalerProvider.autoSelectModel). If this disagrees with
+    -- picked_model often, the ranking is not measuring what people prefer.
+    auto_pick_model VARCHAR(100),
+    picked_model VARCHAR(100),
+    picked_at TIMESTAMP,
+    source_noise_sigma REAL,
+    thermal_state_start VARCHAR(20),
+    thermal_state_end VARCHAR(20),
+    app_version VARCHAR(20),
+    os_version VARCHAR(20),
+    device_model VARCHAR(50)
+);
+CREATE INDEX IF NOT EXISTS idx_comparisons_device ON model_comparisons (device_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_comparisons_picked ON model_comparisons (picked_model, created_at);
+
+-- One row per candidate per sweep: the per-model detail that makes
+-- "which model wins, and by how much" a single query instead of a join
+-- against upscale_history plus a reconstruction of the ordering.
+CREATE TABLE IF NOT EXISTS model_comparison_candidates (
+    id VARCHAR(36) PRIMARY KEY,
+    comparison_id VARCHAR(36) NOT NULL REFERENCES model_comparisons(comparison_id) ON DELETE CASCADE,
+    model_name VARCHAR(100) NOT NULL,
+    candidate_index INT NOT NULL,
+    succeeded BOOLEAN NOT NULL,
+    processing_ms INT,
+    -- The variance-of-Laplacian crop score Compare Models ranks by (see
+    -- UpscalerProvider.sharpnessScore). Recorded per candidate so the
+    -- heuristic's ranking can be checked against the user's pick instead
+    -- of being trusted.
+    sharpness_score REAL,
+    fidelity_psnr REAL,
+    tile_count INT,
+    tiles_reused INT,
+    render_denoise_applied BOOLEAN,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_comparison ON model_comparison_candidates (comparison_id, candidate_index);
+CREATE INDEX IF NOT EXISTS idx_candidates_model ON model_comparison_candidates (model_name, created_at);

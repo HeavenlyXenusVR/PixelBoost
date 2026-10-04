@@ -59,6 +59,14 @@ struct OnboardingView: View {
                     if page < pages.count - 1 {
                         withAnimation { page += 1 }
                     } else {
+                        ActionLoggingService.log("onboarding_finish", detail: [
+                            "page_count": pages.count,
+                        ], outcome: "success")
+                        // The app may go straight to work after this, and
+                        // a first-launch buffer that never flushes is the
+                        // one case where these events are most likely to
+                        // be lost.
+                        TelemetryService.flush()
                         onFinish()
                     }
                 } label: {
@@ -70,6 +78,27 @@ struct OnboardingView: View {
             }
         }
         .preferredColorScheme(.dark)
+        // Which page a first launch reaches is the only drop-off signal
+        // this app has, and it was not recorded anywhere — an onboarding
+        // that loses people on page 2 looked identical in the log to one
+        // everybody finished. Logged on change rather than only at
+        // "Get Started" precisely because the interesting case is the run
+        // that never gets there.
+        .onAppear {
+            ActionLoggingService.log("onboarding_page", detail: [
+                "page": 0, "page_count": pages.count, "furthest": true,
+            ])
+        }
+        .onChange(of: page) { oldPage, newPage in
+            ActionLoggingService.log("onboarding_page", detail: [
+                "page": newPage,
+                "page_count": pages.count,
+                // A swipe back is a different event from reaching a page
+                // for the first time; without this, re-reading page 1
+                // would inflate the furthest-reached count.
+                "furthest": newPage > oldPage,
+            ])
+        }
     }
 }
 

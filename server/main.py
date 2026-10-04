@@ -145,6 +145,58 @@ class UpscaleLogEntry(BaseModel):
     battery_level: Optional[float] = None
     physical_memory_mb: Optional[int] = None
     peak_memory_mb: Optional[int] = None
+    # Per-model run telemetry (added 2026-10-04). Optional like the block
+    # above, so an older app build's payload still posts cleanly.
+    run_kind: Optional[str] = None
+    comparison_id: Optional[str] = None
+    fidelity_psnr: Optional[float] = None
+    tiles_reused: Optional[int] = None
+    output_was_capped: Optional[bool] = None
+    render_denoise_applied: Optional[bool] = None
+    source_noise_sigma: Optional[float] = None
+    free_disk_mb: Optional[int] = None
+
+
+class ComparisonCandidate(BaseModel):
+    """One model's run within a Compare Models / Auto sweep. Mirrors the
+    Swift `ComparisonCandidatePayload`."""
+    model_name: str
+    candidate_index: int
+    succeeded: bool
+    processing_ms: Optional[int] = None
+    sharpness_score: Optional[float] = None
+    fidelity_psnr: Optional[float] = None
+    tile_count: Optional[int] = None
+    tiles_reused: Optional[int] = None
+    render_denoise_applied: Optional[bool] = None
+    error_message: Optional[str] = None
+
+
+class ComparisonLogEntry(BaseModel):
+    """A whole sweep. Mirrors the Swift `ComparisonLogPayload`."""
+    comparison_id: str
+    device_id: str
+    session_id: Optional[str] = None
+    source_width: Optional[int] = None
+    source_height: Optional[int] = None
+    cancelled: Optional[bool] = False
+    total_ms: Optional[int] = None
+    auto_pick_model: Optional[str] = None
+    source_noise_sigma: Optional[float] = None
+    thermal_state_start: Optional[str] = None
+    thermal_state_end: Optional[str] = None
+    app_version: Optional[str] = None
+    os_version: Optional[str] = None
+    device_model: Optional[str] = None
+    candidates: list[ComparisonCandidate] = []
+
+
+class ComparisonPick(BaseModel):
+    """Which result the user actually chose out of a sweep — the one
+    non-proxy quality signal this app has. Posted separately from the sweep
+    itself because the choice happens later, in ModelComparisonView, and may
+    never happen at all."""
+    model_name: str
 
 
 @app.get("/health")
@@ -170,7 +222,10 @@ async def log_upscale(entry: UpscaleLogEntry, request: Request):
                     requested_scale, upscale_strength, anti_aliasing, sharpen,
                     denoise_before, was_batch, cancelled,
                     thermal_state_start, thermal_state_end, low_power_mode,
-                    battery_level, physical_memory_mb, peak_memory_mb
+                    battery_level, physical_memory_mb, peak_memory_mb,
+                    run_kind, comparison_id, fidelity_psnr, tiles_reused,
+                    output_was_capped, render_denoise_applied,
+                    source_noise_sigma, free_disk_mb
                 ) VALUES (
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
@@ -180,7 +235,10 @@ async def log_upscale(entry: UpscaleLogEntry, request: Request):
                     %s, %s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s,
-                    %s, %s, %s
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s,
+                    %s, %s
                 )
                 """,
                 (
@@ -199,6 +257,10 @@ async def log_upscale(entry: UpscaleLogEntry, request: Request):
                     entry.thermal_state_start, entry.thermal_state_end,
                     entry.low_power_mode, entry.battery_level,
                     entry.physical_memory_mb, entry.peak_memory_mb,
+                    entry.run_kind, entry.comparison_id, entry.fidelity_psnr,
+                    entry.tiles_reused, entry.output_was_capped,
+                    entry.render_denoise_applied, entry.source_noise_sigma,
+                    entry.free_disk_mb,
                 ),
             )
     return {"id": entry_id}
@@ -478,6 +540,350 @@ async def get_stats(request: Request, device_id: str = Query(...)):
         "success_rate": (successes / total) if total else None,
         "avg_processing_ms": float(row["avg_processing_ms"]) if row["avg_processing_ms"] is not None else None,
         "total_output_pixels": int(row["total_output_pixels"] or 0),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Per-model comparison telemetry
+# ---------------------------------------------------------------------------
+
+
+@app.post("/log/comparison")
+async def log_comparison(entry: ComparisonLogEntry, request: Request):
+    """Records one Compare Models / Auto sweep plus a row per candidate.
+
+    The candidate runs themselves are also in upscale_history (tagged with
+    the same comparison_id and run_kind='compare'); this is the sweep-level
+    view — every model that ran, the heuristic's ranking, and later the
+    user's actual pick.
+
+    Upsert rather than plain insert: the client generates comparison_id up
+    front so each candidate's upscale_history row can carry it, which means
+    a retry after a partial failure would otherwise collide on the primary
+    key.
+    """
+    await check_auth(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                INSERT INTO model_comparisons (
+                    comparison_id, device_id, session_id, source_width, source_height,
+                    candidate_count, succeeded_count, cancelled, total_ms,
+                    auto_pick_model, source_noise_sigma,
+                    thermal_state_start, thermal_state_end,
+                    app_version, os_version, device_model
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s, %s
+                )
+                ON CONFLICT (comparison_id) DO UPDATE SET
+                    candidate_count = EXCLUDED.candidate_count,
+                    succeeded_count = EXCLUDED.succeeded_count,
+                    cancelled = EXCLUDED.cancelled,
+                    total_ms = EXCLUDED.total_ms,
+                    auto_pick_model = EXCLUDED.auto_pick_model,
+                    thermal_state_end = EXCLUDED.thermal_state_end
+                """,
+                (
+                    entry.comparison_id, entry.device_id, entry.session_id,
+                    entry.source_width, entry.source_height,
+                    len(entry.candidates),
+                    sum(1 for c in entry.candidates if c.succeeded),
+                    bool(entry.cancelled), entry.total_ms,
+                    entry.auto_pick_model, entry.source_noise_sigma,
+                    entry.thermal_state_start, entry.thermal_state_end,
+                    entry.app_version, entry.os_version, entry.device_model,
+                ),
+            )
+            # Replace rather than append, so the upsert above staying
+            # idempotent doesn't leave a retry's candidates duplicated.
+            await cur.execute(
+                "DELETE FROM model_comparison_candidates WHERE comparison_id = %s",
+                (entry.comparison_id,),
+            )
+            for candidate in entry.candidates:
+                await cur.execute(
+                    """
+                    INSERT INTO model_comparison_candidates (
+                        id, comparison_id, model_name, candidate_index, succeeded,
+                        processing_ms, sharpness_score, fidelity_psnr,
+                        tile_count, tiles_reused, render_denoise_applied, error_message
+                    ) VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        uuid.uuid4().hex, entry.comparison_id, candidate.model_name,
+                        candidate.candidate_index, candidate.succeeded,
+                        candidate.processing_ms, candidate.sharpness_score,
+                        candidate.fidelity_psnr, candidate.tile_count,
+                        candidate.tiles_reused, candidate.render_denoise_applied,
+                        candidate.error_message,
+                    ),
+                )
+    return {"comparison_id": entry.comparison_id, "candidates": len(entry.candidates)}
+
+
+@app.post("/log/comparison/{comparison_id}/pick")
+async def log_comparison_pick(comparison_id: str, pick: ComparisonPick, request: Request):
+    """Records which result the user chose. 404 if the sweep was never
+    posted — better than silently creating a pick row with no sweep behind
+    it, which would read as a comparison of nothing."""
+    await check_auth(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE model_comparisons
+                SET picked_model = %s, picked_at = CURRENT_TIMESTAMP
+                WHERE comparison_id = %s
+                """,
+                (pick.model_name, comparison_id),
+            )
+            updated = cur.rowcount
+    if not updated:
+        raise HTTPException(status_code=404, detail="Unknown comparison_id")
+    return {"comparison_id": comparison_id, "picked_model": pick.model_name}
+
+
+@app.get("/log/comparisons")
+async def get_comparisons(
+    request: Request,
+    device_id: Optional[str] = Query(None, description="Filter to one device"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    await check_auth(request)
+    pool = await get_pool()
+    where = "WHERE device_id = %s" if device_id else ""
+    params: tuple = (device_id, limit, offset) if device_id else (limit, offset)
+    async with pool.acquire() as conn:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            await cur.execute(
+                f"""
+                SELECT comparison_id, device_id, created_at, source_width, source_height,
+                       candidate_count, succeeded_count, cancelled, total_ms,
+                       auto_pick_model, picked_model, picked_at, source_noise_sigma,
+                       thermal_state_start, thermal_state_end,
+                       app_version, os_version, device_model
+                FROM model_comparisons
+                {where}
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                params,
+            )
+            comparisons = await cur.fetchall()
+            ids = [row["comparison_id"] for row in comparisons]
+            candidates: list = []
+            if ids:
+                # One query for every listed sweep's candidates rather than
+                # one per sweep — `limit` is up to 200, and a per-row query
+                # there is 200 round trips for no reason.
+                await cur.execute(
+                    """
+                    SELECT comparison_id, model_name, candidate_index, succeeded,
+                           processing_ms, sharpness_score, fidelity_psnr,
+                           tile_count, tiles_reused, render_denoise_applied, error_message
+                    FROM model_comparison_candidates
+                    WHERE comparison_id = ANY(%s)
+                    ORDER BY comparison_id, candidate_index
+                    """,
+                    (ids,),
+                )
+                candidates = await cur.fetchall()
+    grouped: dict = {}
+    for candidate in candidates:
+        grouped.setdefault(candidate.pop("comparison_id"), []).append(candidate)
+    for row in comparisons:
+        row["candidates"] = grouped.get(row["comparison_id"], [])
+    return {"entries": comparisons}
+
+
+# ---------------------------------------------------------------------------
+# Cross-device overview
+# ---------------------------------------------------------------------------
+
+
+@app.get("/log/overview")
+async def get_overview(
+    request: Request,
+    days: int = Query(7, ge=1, le=90, description="Window to aggregate over"),
+):
+    """Fleet-wide health, aggregated across every device.
+
+    Every other read endpoint here is scoped to one `device_id`, and there
+    is no way to enumerate device ids — so until this existed, all of this
+    telemetry was being collected and was effectively unreadable in
+    aggregate: answering "is any model failing?" or "did the last release
+    regress timing?" meant already knowing which device to ask.
+
+    Deliberately returns no `device_id` values and no per-device rows, only
+    counts and distributions — this is an operational health view, not a
+    way to page through individual installs (`/log/history?device_id=` is
+    still that, for a device you already know).
+    """
+    await check_auth(request)
+    pool = await get_pool()
+    window = f"created_at > NOW() - make_interval(days => {int(days)})"
+    async with pool.acquire() as conn:
+        async with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            await cur.execute(
+                f"""
+                SELECT COUNT(*) AS runs,
+                       COUNT(*) FILTER (WHERE success) AS successes,
+                       COUNT(*) FILTER (WHERE cancelled) AS cancelled,
+                       COUNT(DISTINCT device_id) AS devices
+                FROM upscale_history WHERE {window}
+                """
+            )
+            totals = await cur.fetchone()
+
+            # Split by run_kind so a Compare/Auto sweep's six candidate runs
+            # stop being averaged in with deliberate single upscales — the
+            # distinction run_kind was added for. NULL covers rows written
+            # by app builds from before that column existed.
+            await cur.execute(
+                f"""
+                SELECT COALESCE(run_kind, 'unknown') AS run_kind,
+                       model_name,
+                       COUNT(*) AS runs,
+                       COUNT(*) FILTER (WHERE NOT success) AS failures,
+                       ROUND(AVG(processing_ms)) AS avg_ms,
+                       PERCENTILE_DISC(0.95) WITHIN GROUP (ORDER BY processing_ms) AS p95_ms,
+                       ROUND(AVG(fidelity_psnr)::numeric, 2) AS avg_fidelity_psnr,
+                       ROUND(AVG(peak_memory_mb)) AS avg_peak_memory_mb,
+                       COUNT(*) FILTER (WHERE output_was_capped) AS capped,
+                       COUNT(*) FILTER (WHERE thermal_state_end IN ('serious', 'critical')) AS ended_hot
+                FROM upscale_history WHERE {window}
+                GROUP BY 1, 2
+                ORDER BY runs DESC
+                """
+            )
+            by_model = await cur.fetchall()
+
+            await cur.execute(
+                f"""
+                SELECT COALESCE(app_version, 'unknown') AS app_version,
+                       COUNT(*) AS runs,
+                       COUNT(*) FILTER (WHERE NOT success) AS failures,
+                       ROUND(AVG(processing_ms)) AS avg_ms,
+                       COUNT(DISTINCT device_id) AS devices
+                FROM upscale_history WHERE {window}
+                GROUP BY 1
+                ORDER BY runs DESC
+                """
+            )
+            by_version = await cur.fetchall()
+
+            await cur.execute(
+                f"""
+                SELECT error_message, model_name,
+                       COUNT(*) AS occurrences,
+                       COUNT(DISTINCT device_id) AS devices,
+                       MAX(created_at) AS last_seen
+                FROM upscale_history
+                WHERE {window} AND NOT success AND error_message IS NOT NULL
+                GROUP BY 1, 2
+                ORDER BY occurrences DESC
+                LIMIT 20
+                """
+            )
+            top_errors = await cur.fetchall()
+
+            await cur.execute(
+                f"""
+                SELECT action, COALESCE(outcome, 'unknown') AS outcome,
+                       COUNT(*) AS events,
+                       COUNT(DISTINCT device_id) AS devices,
+                       ROUND(AVG(duration_ms)) AS avg_duration_ms
+                FROM action_log WHERE {window}
+                GROUP BY 1, 2
+                ORDER BY events DESC
+                LIMIT 60
+                """
+            )
+            by_action = await cur.fetchall()
+
+            # The user-pick signal: of the sweeps where someone actually
+            # chose a result, which model did they choose? `picks` vs
+            # `shown` matters — a model that wins 3 of 3 appearances is not
+            # the same claim as one that wins 30 of 100.
+            await cur.execute(
+                f"""
+                SELECT c.model_name,
+                       COUNT(*) AS shown,
+                       COUNT(*) FILTER (WHERE m.picked_model = c.model_name) AS picks,
+                       ROUND(AVG(c.sharpness_score)::numeric, 4) AS avg_sharpness,
+                       ROUND(AVG(c.processing_ms)) AS avg_ms,
+                       COUNT(*) FILTER (WHERE NOT c.succeeded) AS failures
+                FROM model_comparison_candidates c
+                JOIN model_comparisons m ON m.comparison_id = c.comparison_id
+                WHERE c.{window}
+                GROUP BY 1
+                ORDER BY picks DESC, shown DESC
+                """
+            )
+            model_picks = await cur.fetchall()
+
+            # How often the content-affinity heuristic agreed with the user.
+            await cur.execute(
+                f"""
+                SELECT COUNT(*) AS decided_sweeps,
+                       COUNT(*) FILTER (WHERE picked_model = auto_pick_model) AS auto_agreed
+                FROM model_comparisons
+                WHERE {window} AND picked_model IS NOT NULL AND auto_pick_model IS NOT NULL
+                """
+            )
+            auto_agreement = await cur.fetchone()
+
+            await cur.execute(
+                f"""
+                SELECT COALESCE(thermal_state, 'unknown') AS thermal_state,
+                       COUNT(*) AS snapshots,
+                       COUNT(DISTINCT device_id) AS devices,
+                       ROUND(AVG(used_memory_mb)) AS avg_used_memory_mb,
+                       ROUND(AVG(free_disk_mb)) AS avg_free_disk_mb
+                FROM device_snapshots WHERE {window}
+                GROUP BY 1
+                ORDER BY snapshots DESC
+                """
+            )
+            thermal = await cur.fetchall()
+
+    runs = int(totals["runs"] or 0)
+    successes = int(totals["successes"] or 0)
+    decided = int((auto_agreement or {}).get("decided_sweeps") or 0)
+    agreed = int((auto_agreement or {}).get("auto_agreed") or 0)
+    return {
+        "window_days": days,
+        "totals": {
+            "runs": runs,
+            "successes": successes,
+            "failures": runs - successes,
+            "success_rate": (successes / runs) if runs else None,
+            "cancelled": int(totals["cancelled"] or 0),
+            "devices": int(totals["devices"] or 0),
+        },
+        "by_model": by_model,
+        "by_app_version": by_version,
+        "top_errors": top_errors,
+        "by_action": by_action,
+        "model_picks": model_picks,
+        "auto_pick_agreement": {
+            "decided_sweeps": decided,
+            "auto_agreed": agreed,
+            "agreement_rate": (agreed / decided) if decided else None,
+        },
+        "thermal_states": thermal,
     }
 
 

@@ -104,12 +104,19 @@ up 3D-render noise — see "Render Denoise" below and
     background, using Vision's on-device subject-lifting API
     (`VNGenerateForegroundInstanceMaskRequest`, iOS 17+) — the same
     technology behind Photos' own "Lift Subject." No custom model needed.
-    Two modes: **Everything** (the original behavior — cuts out every
-    detected subject at once) and **Tap to Select** — Vision's request
+    Three modes: **Everything** (the original behavior — cuts out every
+    detected subject at once), **Tap to Select** — Vision's request
     already segments each subject separately under the hood (it's what
     "Everything" merges together), so tapping a specific person/object in
     the photo cuts out just that one, useful for a group photo or a table
-    of items where "Everything" would grab all of them at once. Once the
+    of items where "Everything" would grab all of them at once — and
+    **Touch Up**, a brush for repairing what Vision got wrong: *Restore*
+    paints the original photo's pixels back over part of the subject the
+    matte wrongly cut away, *Erase* clears background it wrongly kept.
+    Before this, a bad matte had no recourse at all — re-running the same
+    request gives the same answer. It's a manual repair rather than a
+    better segmenter, so a precise outline around hair or foliage still
+    means patient work at a small brush size. Once the
     result has transparency, a **Background** strip appears
     right below it — seven curated fills (five solid/gradient swatches,
     plus a blurred copy of the original photo, the common "fake bokeh"
@@ -128,8 +135,12 @@ up 3D-render noise — see "Render Denoise" below and
   - **Selective** — the same brightness/contrast/saturation/exposure
     adjustments as Adjust, but paint a region first and they apply only
     there, blended back over the untouched original everywhere else.
-  - **Crop & Rotate** — 90° rotate plus fixed-ratio crop (Free/1:1/4:5/
-    5:4/16:9/9:16); drag the crop window to reposition it.
+  - **Crop & Rotate** — 90° rotate, horizontal/vertical flip, plus
+    fixed-ratio crop (Free/1:1/4:5/5:4/16:9/9:16); drag the crop window to
+    reposition it. Flipping keeps a picked ratio and its window (a flip
+    doesn't change the image's dimensions, so the window just frames the
+    mirrored region); rotating drops back to Free, since the old window was
+    sized for the previous aspect ratio.
   - **Filters** — thirteen one-tap looks (Vivid, Mono, Noir, Silvertone,
     Chrome, Process, Transfer, Instant, Fade, Sepia, Warm, Cool, Matte)
     built from Core Image's built-in photo-effect filters (plus a few
@@ -155,8 +166,12 @@ up 3D-render noise — see "Render Denoise" below and
     Blender's Cycles Denoise node uses), for cleaning up noise from a 3D
     render (Cycles, Eevee, any other path tracer) rather than a real
     photo's sensor grain, which Restore's `CINoiseReduction` slider is
-    tuned for instead. Fixed-strength, one Apply action — no slider, since
-    the model has no adjustable parameter.
+    tuned for instead. The model has no adjustable parameter, so the
+    **Strength** slider mixes its result back over the original after
+    inference rather than changing how it runs — a way to back off a pass
+    that's too aggressive on a lightly-noisy render instead of taking it
+    all-or-nothing. Full strength is the default (the model's raw output);
+    a strength of 0 skips inference entirely.
   - **Clone Stamp** — tap a source point, then paint elsewhere to copy
     pixels from a fixed offset relative to that point (the offset is set
     once, from the source point and the first spot you paint, then stays
@@ -376,7 +391,30 @@ FastAPI + PostgreSQL service backing everything server-side is optional in
 the app:
 
 - Debug logging (`upscale_history`) — every upscale attempt, for
-  debugging/stats.
+  debugging/stats. Each row carries `run_kind` ('single' | 'batch' |
+  'compare' | 'intent'), which matters more than it sounds: Auto mode and
+  Compare Models run *every* bundled model over the full photo, and each
+  candidate run used to land here indistinguishable from a deliberate
+  single upscale — so every per-model aggregate quietly mixed one requested
+  run in with a six-model sweep nobody asked for individually. Rows also
+  carry the fidelity PSNR, duplicate-tile reuse count and output-capped
+  flag the run already computed (and previously discarded at the log
+  boundary), and whether the render-denoise pre-pass actually *ran* rather
+  than merely being requested.
+- Per-model comparison telemetry (`model_comparisons` /
+  `model_comparison_candidates`) — one row per Compare Models sweep and one
+  per candidate within it, including which result **the user actually
+  picked**. That last column is the only non-proxy signal this app has
+  about model quality: the sharpness score is a heuristic standing in for
+  "looks better", and a human choosing one of six results they can all see
+  is the real answer. The app's own ranking winner is stored next to it, so
+  "does the metric agree with people?" is a single query.
+- `GET /log/overview` — fleet-wide health across every device (per-model
+  timing and failures, per-app-version rollup, top errors, model-pick
+  table, thermal distribution). Every other read endpoint is scoped to one
+  `device_id` with no way to enumerate them, so this is what makes any of
+  the above readable in aggregate rather than only for a device you already
+  know.
 - Temporary image storage (`image_imports`/`image_exports`) — auto-
   expiring (default 24h, max 7 days) cloud backup for photos, with a real
   cleanup loop actually deleting expired rows, not just a documented
@@ -443,22 +481,33 @@ Swift Package resolution, no network access needed at build time.
   files have not been run in Xcode/the simulator directly — that requires
   macOS, which wasn't available where they were converted. See
   [`Models/README.md`](Models/README.md).
-- No share extension, Live Activity/background processing for long
-  batches, or iCloud sync yet — a deliberate later effort, not an oversight.
-- Remove Background relies entirely on Vision's own segmentation quality —
-  there's no fallback or manual touch-up (refine edges, add/remove regions)
-  if it misses part of the subject or includes background it shouldn't.
-  Like everything else in this app, it hasn't been run on a physical
-  device yet either. Tap to Select shares the same reliance (it's the same
+- No iCloud sync yet — a deliberate later effort, not an oversight. (The
+  share extension and the batch Live Activity both exist now — see
+  `PixelBoostShare/` and `BatchLiveActivityController`.)
+- Remove Background relies entirely on Vision's own segmentation quality,
+  but a miss is no longer a dead end: the Cutout tab's third mode,
+  **Touch Up**, brushes the result by hand — Restore paints the original
+  photo's pixels back over a part of the subject the matte wrongly cut
+  away, Erase clears background it wrongly kept (see
+  `CutoutRefineService`). Same stroke/mask plumbing as Erase and Selective
+  Adjustments (`BrushMask`), composited with a slightly feathered mask so a
+  stroke doesn't read as an obvious paint-over against Vision's own soft
+  matte. It is still a manual repair, not a better segmenter: there's no
+  edge-aware snapping, so a precise outline around hair or foliage means
+  patient work at a small brush size. Like everything else in this app, it
+  hasn't been run on a physical device yet either. Tap to Select shares the same reliance (it's the same
   underlying Vision request, just consumed per-instance) and picks
   whichever detected instance's mask covers the tapped point first — if
   two subjects' masks overlap at that exact pixel, whichever was detected
   first wins, with no indication to the user that a second candidate was
   even there.
 - Crop is fixed-ratio-window-plus-reposition only — no corner-drag resize
-  handles or free-angle straighten yet. Rotate is 90° increments only, no
-  flip (the flip transforms exist in `ImageTransform` but aren't wired to
-  a button yet, pending SF Symbol names worth actually trusting).
+  handles or free-angle straighten yet. Rotate is 90° increments only.
+  Horizontal/vertical flip are now wired to buttons in the Crop & Rotate
+  tab (`ImageTransform.flippedHorizontally/Vertically`, which already
+  existed); unlike rotate, a flip leaves the image's dimensions alone, so a
+  picked ratio and its crop window both stay valid and the window simply
+  frames the mirrored region.
 - Overlays are text-only, drag-to-reposition only — no pinch-resize or
   rotate gesture, and no dedicated sticker-art library (emoji via the
   system keyboard cover that role instead). Size/color/font/outline/shadow
@@ -493,10 +542,14 @@ Swift Package resolution, no network access needed at build time.
   conversion environment, not a property of the model — see
   `Models/convert/README.md`), producing a `.mlmodel` rather than a
   `.mlpackage`; functionally equivalent once Xcode compiles it, but
-  untested end-to-end like everything else in this list. Fixed-strength
-  only — the underlying model has no adjustable parameter, so unlike
-  Restore there's no slider to back off if it's too aggressive on a given
-  image.
+  untested end-to-end like everything else in this list. The underlying
+  model still has no adjustable parameter, so the tab's **Strength** slider
+  is a post-inference mix of the denoised result back over the original
+  (`RenderDenoiseService.denoise(_:strength:progress:)`) rather than a
+  model setting — enough to back off a pass that's too aggressive on a
+  lightly-noisy render, which used to be all-or-nothing. The model always
+  runs at full strength regardless, so this costs nothing in time; a
+  strength of 0 short-circuits and skips inference entirely.
 - Adding BSRGAN as a fifth Auto-mode candidate is a real behavior change
   for every user, not just those upscaling 3D renders — Auto (and Compare
   Models) now run one more model per photo (slower), and BSRGAN's

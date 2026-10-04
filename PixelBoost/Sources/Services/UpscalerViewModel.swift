@@ -326,6 +326,8 @@ final class UpscalerViewModel: ObservableObject {
                 blendAmount: provider.upscaleStrength,
                 detailLevel: "full_res:\(provider.power.rawValue)",
                 requestedScale: provider.scaleFactor.rawValue,
+                runKind: "single",
+                sourceNoiseSigma: NoiseEstimator.sigma(of: input),
                 session: session
             ) { [weak self] value in
                 Task { @MainActor in self?.progress = value }
@@ -453,35 +455,77 @@ final class UpscalerViewModel: ObservableObject {
                 return
             }
 
+            // Groups this sweep's per-candidate `upscale_history` rows (each
+            // tagged run_kind: "compare") with the `model_comparisons` row
+            // posted at the end, and is what `ModelComparisonView` later
+            // reports the user's pick against. Generated up front precisely
+            // so the candidate rows can carry it as they're written.
+            let comparisonID = UUID().uuidString
+            comparisonSweepID = comparisonID
+            let sweepStartedAt = Date()
+            let thermalStateStart = TelemetryService.thermalStateName
+
             // Render denoise only helps a render that's actually noisy; on a
             // clean one it erases texture before the model ever sees it.
-            let sourceIsNoisy = (NoiseEstimator.sigma(of: input) ?? 0) > NoiseEstimator.renderDenoiseThreshold
+            let sourceNoiseSigma = NoiseEstimator.sigma(of: input)
+            let sourceIsNoisy = (sourceNoiseSigma ?? 0) > NoiseEstimator.renderDenoiseThreshold
             var results: [ModelComparisonResult] = []
+            var candidatePayloads: [ComparisonCandidatePayload] = []
             for (index, candidate) in candidates.enumerated() {
                 if Task.isCancelled { break }
                 // The render-tuned candidates expect pre-cleaned input, so
                 // they get the render denoise pass first (as Batch's auto
                 // pick does); the others run on the photo as-is.
                 let autoRenderDenoise = sourceIsNoisy && (candidate.choice == .render3D || candidate.choice == .stylizedRender)
+                let candidateStartedAt = Date()
                 let outcome = await UpscaleRunner.run(
                     input, using: candidate.upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
                     antiAliasingAmount: provider.antiAliasingAmount,
                     autoRenderDenoise: autoRenderDenoise,
                     detailLevel: "full_res:\(provider.power.rawValue)",
                     requestedScale: provider.scaleFactor.rawValue,
+                    runKind: "compare",
+                    comparisonID: comparisonID,
+                    sourceNoiseSigma: sourceNoiseSigma,
                     session: session
                 ) { [weak self] tileProgress in
                     Task { @MainActor in
                         self?.comparisonProgress = (Double(index) + tileProgress) / Double(candidates.count)
                     }
                 }
+                let candidateMS = Int(Date().timeIntervalSince(candidateStartedAt) * 1000)
                 if let result = outcome.result {
+                    let sharpness = UpscalerProvider.sharpnessScore(result.image)
                     results.append(ModelComparisonResult(
                         choice: candidate.choice, image: result.image,
-                        sharpnessScore: UpscalerProvider.sharpnessScore(result.image)
+                        sharpnessScore: sharpness
                     ))
-                } else if outcome.error is CancellationError {
-                    break
+                    candidatePayloads.append(ComparisonCandidatePayload(
+                        model_name: candidate.choice.rawValue,
+                        candidate_index: index,
+                        succeeded: true,
+                        processing_ms: candidateMS,
+                        sharpness_score: sharpness,
+                        fidelity_psnr: result.fidelityPSNR,
+                        tile_count: result.tileCount,
+                        tiles_reused: result.tilesReused,
+                        render_denoise_applied: autoRenderDenoise
+                    ))
+                } else {
+                    // A failed candidate is recorded too — "this model
+                    // never produces a result on this device" is the most
+                    // useful thing this sweep can tell us, and dropping
+                    // the row would make it look like the model was simply
+                    // never tried.
+                    candidatePayloads.append(ComparisonCandidatePayload(
+                        model_name: candidate.choice.rawValue,
+                        candidate_index: index,
+                        succeeded: false,
+                        processing_ms: candidateMS,
+                        render_denoise_applied: autoRenderDenoise,
+                        error_message: outcome.error?.localizedDescription
+                    ))
+                    if outcome.error is CancellationError { break }
                 }
             }
 
@@ -494,10 +538,62 @@ final class UpscalerViewModel: ObservableObject {
             } else {
                 Haptics.success()
             }
-            ActionLoggingService.log("compare_models", detail: [
-                "candidate_count": candidates.count,
-                "result_count": results.count,
-            ])
+            ActionLoggingService.log(
+                "compare_models",
+                detail: [
+                    "comparison_id": comparisonID,
+                    "candidate_count": candidates.count,
+                    "result_count": results.count,
+                    "source_noise_sigma": sourceNoiseSigma,
+                ],
+                outcome: Task.isCancelled ? "cancelled" : (results.isEmpty ? "failed" : "success"),
+                durationMS: Int(Date().timeIntervalSince(sweepStartedAt) * 1000)
+            )
+
+            let payload = ComparisonLogPayload(
+                comparison_id: comparisonID,
+                device_id: DeviceIdentity.current,
+                source_width: Int(input.size.width),
+                source_height: Int(input.size.height),
+                cancelled: Task.isCancelled,
+                total_ms: Int(Date().timeIntervalSince(sweepStartedAt) * 1000),
+                // The sweep's own winner by the metric the UI ranks on,
+                // recorded next to the user's eventual pick so the two can
+                // be compared directly. If they disagree often, the metric
+                // is not measuring what people actually prefer.
+                auto_pick_model: results.max(by: { $0.sharpnessScore < $1.sharpnessScore })?.choice.rawValue,
+                source_noise_sigma: sourceNoiseSigma,
+                thermal_state_start: thermalStateStart,
+                thermal_state_end: TelemetryService.thermalStateName,
+                os_version: UIDevice.current.systemVersion,
+                device_model: UIDevice.current.model,
+                candidates: candidatePayloads
+            )
+            Task.detached(priority: .background) {
+                await ComparisonLoggingService.log(payload)
+            }
+        }
+    }
+
+    /// The sweep `comparisonResults` came from, so `ModelComparisonView`
+    /// can report which result the user picked against the right
+    /// `model_comparisons` row. Replaced at the start of each sweep, so a
+    /// pick is always reported against the sweep currently on screen.
+    private(set) var comparisonSweepID: String?
+
+    /// Called when the user chooses one of the compared results — the one
+    /// ground-truth quality signal this app has (every other is a
+    /// heuristic standing in for "looks better").
+    func recordComparisonPick(_ choice: UpscaleModelChoice) {
+        ActionLoggingService.log("comparison_pick", detail: [
+            "model": choice.rawValue,
+            "comparison_id": comparisonSweepID,
+            "candidate_count": comparisonResults.count,
+        ], outcome: "success")
+        guard let comparisonSweepID else { return }
+        let modelName = choice.rawValue
+        Task.detached(priority: .background) {
+            await ComparisonLoggingService.recordPick(comparisonID: comparisonSweepID, modelName: modelName)
         }
     }
 
@@ -546,6 +642,10 @@ final class UpscalerViewModel: ObservableObject {
 
     /// Called when the user taps "Use This" on one of `comparisonResults`.
     func pickComparisonResult(_ result: ModelComparisonResult) {
+        // Before clearing `comparisonResults` — the pick record includes
+        // how many results the choice was made from, which is the
+        // difference between "best of 6" and "the only one that worked".
+        recordComparisonPick(result.choice)
         skipNextAutoCloudBackup = true
         resultImage = result.image
         comparisonResults = []

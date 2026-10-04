@@ -176,6 +176,7 @@ final class BatchUpscaleViewModel: ObservableObject {
                 detailLevel: "full_res:\(provider.power.rawValue)",
                 requestedScale: provider.scaleFactor.rawValue,
                 isBatch: true,
+                sourceNoiseSigma: NoiseEstimator.sigma(of: normalized),
                 session: UpscaleSession(power: provider.power, fidelity: provider.fidelity)
             ) { _ in }
             guard let result = outcome.result else {
