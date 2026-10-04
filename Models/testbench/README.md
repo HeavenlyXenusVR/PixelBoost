@@ -19,6 +19,12 @@ tests the pipeline logic and the model weights. It does **not** test the
   whole-image result is the reference the tiled path is measured against.
   A seam or offset bug shows up as error concentrated on tile boundaries.
 - `build_sheets.py` — labeled side-by-side comparison sheets.
+- `verify_pixel_engine.py` — numpy-only port of the v4 pixel engine's
+  clamp-to-edge tile copy and native-scale row-copy stitch. With a
+  pointwise stand-in model it asserts every output pixel is written
+  exactly once and the tiled result equals the untiled one exactly, across
+  odd sizes, 1×1 images and 1×/2×/4× scales. (`pipeline.py`'s `detail`
+  budget is historical: the app no longer downscales before the model.)
 
 Setup (system Python is too new for coremltools/torch here):
 

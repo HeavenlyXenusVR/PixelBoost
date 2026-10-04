@@ -35,9 +35,9 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            dock
+            // Stays put behind the keyboard instead of riding up over it.
+            dock.ignoresSafeArea(.keyboard, edges: .bottom)
         }
-        .ignoresSafeArea(.keyboard, edges: .bottom)
         .onChange(of: selectedTab) { previous, tab in
             ActionLoggingService.log("tab_change", detail: [
                 "from": previous.rawValue, "to": tab.rawValue,
