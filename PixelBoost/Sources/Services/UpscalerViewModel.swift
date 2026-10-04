@@ -17,6 +17,17 @@ struct UpscaleRunSummary {
     let tiles: Int?
     let outputSize: CGSize
     let outputWasCapped: Bool
+    let fidelityPSNR: Double?
+    let tilesReused: Int
+}
+
+/// One model's result on a small crop — see `UpscalerViewModel.previewPatch`.
+struct PatchPreviewResult: Identifiable {
+    let id = UUID()
+    let choice: UpscaleModelChoice?
+    let title: String
+    let image: UIImage
+    let fidelityPSNR: Double?
 }
 
 @MainActor
@@ -328,7 +339,9 @@ final class UpscalerViewModel: ObservableObject {
                     } ?? "Lanczos",
                     seconds: seconds, tiles: result.tileCount,
                     outputSize: CGSize(width: result.image.cgImage?.width ?? 0, height: result.image.cgImage?.height ?? 0),
-                    outputWasCapped: result.outputWasCapped
+                    outputWasCapped: result.outputWasCapped,
+                    fidelityPSNR: result.fidelityPSNR,
+                    tilesReused: result.tilesReused
                 )
                 skipNextAutoCloudBackup = true
                 self.resultImage = result.image
@@ -349,7 +362,7 @@ final class UpscalerViewModel: ObservableObject {
         isPaused = false
         runStartedAt = Date()
         liveFrame = nil
-        session = UpscaleSession(power: provider.power) { [weak self] frame in
+        session = UpscaleSession(power: provider.power, fidelity: provider.fidelity) { [weak self] frame in
             Task { @MainActor in
                 guard let self, self.runStartedAt != nil else { return }
                 self.liveFrame = frame
@@ -440,13 +453,16 @@ final class UpscalerViewModel: ObservableObject {
                 return
             }
 
+            // Render denoise only helps a render that's actually noisy; on a
+            // clean one it erases texture before the model ever sees it.
+            let sourceIsNoisy = (NoiseEstimator.sigma(of: input) ?? 0) > NoiseEstimator.renderDenoiseThreshold
             var results: [ModelComparisonResult] = []
             for (index, candidate) in candidates.enumerated() {
                 if Task.isCancelled { break }
                 // The render-tuned candidates expect pre-cleaned input, so
                 // they get the render denoise pass first (as Batch's auto
                 // pick does); the others run on the photo as-is.
-                let autoRenderDenoise = candidate.choice == .render3D || candidate.choice == .stylizedRender
+                let autoRenderDenoise = sourceIsNoisy && (candidate.choice == .render3D || candidate.choice == .stylizedRender)
                 let outcome = await UpscaleRunner.run(
                     input, using: candidate.upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
                     antiAliasingAmount: provider.antiAliasingAmount,
@@ -483,6 +499,49 @@ final class UpscalerViewModel: ObservableObject {
                 "result_count": results.count,
             ])
         }
+    }
+
+    // MARK: - Patch preview
+
+    @Published private(set) var isPreviewingPatch = false
+
+    /// Runs the current settings — or, in Auto, every bundled model — on a
+    /// small crop around `center` (normalized 0...1), with the same
+    /// fidelity pass as a full run. A few tiles per model instead of a
+    /// thousand: seconds and almost no battery to find out which model
+    /// suits this photo before committing to the full upscale. Not logged
+    /// to History.
+    func previewPatch(at center: CGPoint, side: Int = 160) async -> (before: UIImage, results: [PatchPreviewResult])? {
+        guard let input = resultImage ?? sourceImage, let cg = input.cgImage, !isBusy, !isPreviewingPatch else { return nil }
+        isPreviewingPatch = true
+        defer { isPreviewingPatch = false }
+        let size = min(side, cg.width, cg.height)
+        let x = min(max(0, Int(center.x * CGFloat(cg.width)) - size / 2), cg.width - size)
+        let y = min(max(0, Int(center.y * CGFloat(cg.height)) - size / 2), cg.height - size)
+        guard let crop = cg.cropping(to: CGRect(x: x, y: y, width: size, height: size)) else { return nil }
+        let patch = UIImage(cgImage: crop, scale: 1, orientation: .up)
+        let session = UpscaleSession(power: provider.power, fidelity: provider.fidelity)
+
+        var candidates: [(choice: UpscaleModelChoice?, upscaler: ImageUpscaling)] = []
+        if provider.modelChoice == .auto, provider.quality != .fast {
+            candidates = await provider.resolveAllBundled().map { (choice: Optional($0.choice), upscaler: $0.upscaler) }
+        } else {
+            let upscaler = await provider.resolveCurrent(for: input)
+            let choice = provider.modelChoice == .auto ? provider.lastAutoSelectedModel : provider.modelChoice
+            candidates = [(provider.quality == .fast ? nil : choice, upscaler)]
+        }
+        var results: [PatchPreviewResult] = []
+        for candidate in candidates {
+            guard let result = try? await candidate.upscaler.upscale(patch, session: session, progress: { _ in }) else { continue }
+            results.append(PatchPreviewResult(
+                choice: candidate.choice,
+                title: candidate.choice?.displayName ?? "Lanczos",
+                image: result.image,
+                fidelityPSNR: result.fidelityPSNR
+            ))
+        }
+        ActionLoggingService.log("patch_preview", detail: ["candidates": candidates.count, "results": results.count])
+        return results.isEmpty ? nil : (patch, results)
     }
 
     /// Called when the user taps "Use This" on one of `comparisonResults`.

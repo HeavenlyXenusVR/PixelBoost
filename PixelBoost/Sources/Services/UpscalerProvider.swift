@@ -204,6 +204,7 @@ final class UpscalerProvider: ObservableObject {
     private static let upscaleStrengthDefaultsKey = "com.pixelboost.upscaleStrength"
     private static let scaleFactorDefaultsKey = "com.pixelboost.scaleFactor"
     private static let powerDefaultsKey = "com.pixelboost.power"
+    private static let fidelityDefaultsKey = "com.pixelboost.fidelity"
     private static let exportFormatDefaultsKey = "com.pixelboost.exportFormat"
     private static let exportQualityDefaultsKey = "com.pixelboost.exportQuality"
     private static let denoiseBeforeUpscaleDefaultsKey = "com.pixelboost.denoiseBeforeUpscale"
@@ -279,6 +280,12 @@ final class UpscalerProvider: ObservableObject {
     /// Where and how hard upscales run — see `UpscalePower`. Replaced the
     /// old Detail setting, which shrank the photo before the model saw it;
     /// every upscale is full resolution now, pixel by pixel.
+    /// Post-model refinement against the original's pixels (Detail Lock +
+    /// Halo Guard) — see `UpscaleFidelity`. Natural by default: it's what
+    /// stops soft sources from coming out smeared or outlined.
+    @Published var fidelity: UpscaleFidelity {
+        didSet { UserDefaults.standard.set(fidelity.rawValue, forKey: Self.fidelityDefaultsKey); Self.logChange("fidelity", fidelity.rawValue) }
+    }
     @Published var power: UpscalePower {
         didSet { UserDefaults.standard.set(power.rawValue, forKey: Self.powerDefaultsKey); Self.logChange("power", power.rawValue) }
     }
@@ -448,6 +455,8 @@ final class UpscalerProvider: ObservableObject {
         scaleFactor = storedScale.flatMap(UpscaleFactor.init(rawValue:)) ?? .x4
         power = UserDefaults.standard.string(forKey: Self.powerDefaultsKey)
             .flatMap(UpscalePower.init(rawValue:)) ?? .balanced
+        fidelity = UserDefaults.standard.string(forKey: Self.fidelityDefaultsKey)
+            .flatMap(UpscaleFidelity.init(rawValue:)) ?? .natural
         temporaryCloudSaveEnabled = Self.storedTemporaryCloudSaveEnabled
         temporaryCloudTTLHours = Self.storedTemporaryCloudTTLHours
         diagnosticsEnabled = UserDefaults.standard.object(forKey: TelemetryService.diagnosticsEnabledDefaultsKey) as? Bool ?? true

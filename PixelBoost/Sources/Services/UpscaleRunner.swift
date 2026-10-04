@@ -83,18 +83,10 @@ enum UpscaleRunner {
                 result = await blended(result, sourceImage: sourceImage, upscaler: upscaler, amount: blendAmount) ?? result
             }
             if antiAliasingAmount > 0 {
-                result = UpscaleResult(
-                    image: ImageTransform.antiAliased(result.image, amount: antiAliasingAmount),
-                    tileCount: result.tileCount, modelInputSize: result.modelInputSize,
-                    outputWasCapped: result.outputWasCapped
-                )
+                result = result.replacingImage(ImageTransform.antiAliased(result.image, amount: antiAliasingAmount))
             }
             if sharpenAmount > 0 {
-                result = UpscaleResult(
-                    image: PostSharpen.apply(result.image, amount: sharpenAmount),
-                    tileCount: result.tileCount, modelInputSize: result.modelInputSize,
-                    outputWasCapped: result.outputWasCapped
-                )
+                result = result.replacingImage(PostSharpen.apply(result.image, amount: sharpenAmount))
             }
             log(
                 upscaler: upscaler, sourceImage: sourceImage, sourceFileSizeBytes: sourceFileSizeBytes,
@@ -133,7 +125,7 @@ enum UpscaleRunner {
               let fallback = try? await LanczosUpscaler(scaleFactor: scale).upscale(sourceImage, progress: { _ in }),
               let blendedImage = crossDissolve(result.image, fallback.image, amount: amount)
         else { return nil }
-        return UpscaleResult(image: blendedImage, tileCount: result.tileCount, modelInputSize: result.modelInputSize, outputWasCapped: result.outputWasCapped)
+        return result.replacingImage(blendedImage)
     }
 
     private static let blendContext = CIContext()

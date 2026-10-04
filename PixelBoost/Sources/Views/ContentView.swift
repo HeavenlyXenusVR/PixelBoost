@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var zoomedImage: UIImage?
     @State private var isInspecting = false
+    @State private var isPreviewingPatch = false
     @State private var isBackingUp = false
     @State private var backupAlertMessage: String?
     @State private var isPresentingEXRImporter = false
@@ -111,6 +112,11 @@ struct ContentView: View {
                         after: result,
                         display: viewModel.displayResult ?? result.downsampledForDisplay(maxDimension: 2048)
                     )
+                }
+            }
+            .fullScreenCover(isPresented: $isPreviewingPatch) {
+                if let display = viewModel.displayResult ?? viewModel.displaySource {
+                    PatchPreviewView(display: display)
                 }
             }
             .fullScreenCover(isPresented: Binding(
@@ -300,6 +306,13 @@ struct ContentView: View {
                 PBSegmented(options: [UpscaleQuality.fast, .standard, .best], selection: qualityBinding, label: { $0.displayName })
             }
             if provider.quality != .fast {
+                setupRow("Fidelity") {
+                    PBSegmented(options: UpscaleFidelity.allCases, selection: $provider.fidelity, label: { $0.displayName })
+                }
+                Text(provider.fidelity.footnote)
+                    .pbFont(.caption)
+                    .foregroundStyle(PBColor.inkFaint)
+                    .fixedSize(horizontal: false, vertical: true)
                 setupRow("Power") {
                     PBSegmented(options: UpscalePower.allCases, selection: $provider.power, label: { $0.displayName }, icon: { $0.systemImage })
                 }
@@ -374,6 +387,28 @@ struct ContentView: View {
                         .pbFont(.caption)
                         .foregroundStyle(PBColor.inkFaint)
                 }
+                if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue,
+                   provider.power.effective != .efficiency {
+                    HStack(spacing: 10) {
+                        Label("The phone is already hot — it'll throttle and drain faster.", systemImage: "thermometer.high")
+                            .pbFont(.caption)
+                            .foregroundStyle(PBColor.warn)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
+                        Button("Use Efficiency") { provider.power = .efficiency }
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .tint(PBColor.accent)
+                    }
+                }
+                if provider.quality != .fast {
+                    Button {
+                        Haptics.lightImpact()
+                        isPreviewingPatch = true
+                    } label: {
+                        Label(isCompareMode ? "Preview every model on a patch" : "Preview on a patch first", systemImage: "square.dashed.inset.filled")
+                    }
+                    .buttonStyle(.pbGhost)
+                }
             }
             .padding(14)
             .pbGlassSurface(cornerRadius: 20)
@@ -424,7 +459,7 @@ struct ContentView: View {
                 .tint(PBColor.accent)
             HStack(spacing: 12) {
                 if let frame = viewModel.liveFrame {
-                    PBMetric(label: "Tiles", value: "\(frame.tilesDone)/\(frame.tilesTotal)")
+                    PBMetric(label: frame.tilesReused > 0 ? "Tiles (\(frame.tilesReused) reused)" : "Tiles", value: "\(frame.tilesDone)/\(frame.tilesTotal)")
                     PBMetric(label: "Pixels", value: String(format: "%.1f/%.1f MP", Double(frame.pixelsDone) / 1_000_000, Double(frame.pixelsTotal) / 1_000_000))
                 } else {
                     PBMetric(label: "Tiles", value: "—")
@@ -471,10 +506,18 @@ struct ContentView: View {
         if let resultImage = viewModel.resultImage {
             VStack(spacing: 12) {
                 if let summary = viewModel.lastRunSummary {
-                    HStack(spacing: 12) {
-                        PBMetric(label: "Model", value: summary.modelName)
-                        PBMetric(label: "Time", value: UpscaleEstimator.format(seconds: summary.seconds))
-                        PBMetric(label: "Tiles", value: summary.tiles.map(String.init) ?? "—")
+                    VStack(spacing: 12) {
+                        HStack(spacing: 12) {
+                            PBMetric(label: "Model", value: summary.modelName)
+                            PBMetric(label: "Time", value: UpscaleEstimator.format(seconds: summary.seconds))
+                        }
+                        HStack(spacing: 12) {
+                            PBMetric(label: "Fidelity", value: summary.fidelityPSNR.map { String(format: "%.1f dB", $0) } ?? "—",
+                                     tint: (summary.fidelityPSNR ?? 0) >= 40 ? PBColor.good : PBColor.ink)
+                            PBMetric(label: "Tiles", value: summary.tiles.map { tiles in
+                                summary.tilesReused > 0 ? "\(tiles) (\(summary.tilesReused) reused)" : "\(tiles)"
+                            } ?? "—")
+                        }
                     }
                     .padding(14)
                     .pbGlassSurface(cornerRadius: 18)

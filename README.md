@@ -46,6 +46,27 @@ up 3D-render noise — see "Render Denoise" below and
   Transparency is preserved (un-premultiplied in, alpha resampled back).
   `Models/testbench/verify_pixel_engine.py` checks the tiling writes every
   output pixel exactly once and matches an untiled reference.
+- **Fidelity (Detail Lock + Halo Guard)** — on soft or compressed sources
+  (3D renders, screenshots, re-saved JPEGs) GAN models repaint texture into
+  smooth patches and draw dark/bright outlines along edges. After the model,
+  the result is shrunk back to source size and compared with the original
+  pixel by pixel; the residual is scaled up and added back (two
+  back-projection passes, vImage Lanczos), then every output pixel is
+  clamped to its source 3×3 neighborhood's range ± a small tolerance.
+  Off / Natural (default) / Faithful. Each run reports its fidelity in dB
+  (source vs. result shrunk back). `Models/testbench/verify_fidelity.py`
+  simulates a smearing, haloing model: 36.9 dB raw → 47.4 Natural → 55.2
+  Faithful.
+- **Duplicate-tile skipping** — identical input tiles (flat backgrounds,
+  letterboxing, UI) reuse the earlier output instead of running the model;
+  inference is deterministic, so the pixels are identical.
+- **Noise-gated render denoise** — Auto/Batch only pre-denoise a render
+  with the render-denoise model when its measured noise (Immerkær
+  estimator) says it needs it; on clean renders that pass was erasing
+  texture before the model saw it.
+- **Patch Preview** — upscale a 160px patch you choose with every model
+  (Auto) or the current one, with fidelity scores, and pick the model
+  before committing to a full run.
 - **Power modes instead of Detail** — Efficiency (Neural Engine + CPU, no
   GPU, utility QoS, paces itself when warm), Balanced, Performance. Low
   Power Mode forces Efficiency. Thermal pacing backs off between batches.

@@ -90,8 +90,11 @@ final class BatchUpscaleViewModel: ObservableObject {
             // on a render-tuned model, the whole batch gets the matching
             // auto prep too, same as Compare Models does per-candidate for
             // the interactive path (see UpscalerViewModel.compareModels).
+            // Only when the render is actually noisy: on a clean render the
+            // denoiser has nothing to remove but texture.
             let autoRenderDenoise = provider.modelChoice == .auto
                 && (provider.lastAutoSelectedModel == .render3D || provider.lastAutoSelectedModel == .stylizedRender)
+                && (previewImage.flatMap(NoiseEstimator.sigma(of:)) ?? 0) > NoiseEstimator.renderDenoiseThreshold
             let batchStartedAt = Date()
             ActionLoggingService.log("batch_start", detail: [
                 "count": items.count,
@@ -173,7 +176,7 @@ final class BatchUpscaleViewModel: ObservableObject {
                 detailLevel: "full_res:\(provider.power.rawValue)",
                 requestedScale: provider.scaleFactor.rawValue,
                 isBatch: true,
-                session: UpscaleSession(power: provider.power)
+                session: UpscaleSession(power: provider.power, fidelity: provider.fidelity)
             ) { _ in }
             guard let result = outcome.result else {
                 items[index].status = .failed(outcome.error?.localizedDescription ?? "Upscale failed.")

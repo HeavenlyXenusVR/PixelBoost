@@ -189,6 +189,11 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         guard let inputPool = Self.makePool(size: tileSize) else { throw UpscaleError.renderFailed }
         let queue = DispatchQueue(label: "pixelboost.tiles", qos: power.dispatchQoS)
 
+        // Identical input tiles (flat backgrounds, letterbox bars, UI
+        // chrome) skip the model: same input, same deterministic output.
+        let tileCache = TileCache(capacity: 32)
+        var tilesReused = 0
+
         var lastProgressAt = Date.distantPast
         var lastFrameAt = Date.distantPast
         var pixelsDone = 0
@@ -210,7 +215,26 @@ final class CoreMLTileUpscaler: ImageUpscaling {
                 source.copyTile(origin: (Int(tile.sourceRect.minX), Int(tile.sourceRect.minY)), size: tileSize, into: buffer)
                 return buffer
             }
-            let outputs = try await predict(inputs, on: queue)
+            var resolved = [CVPixelBuffer?](repeating: nil, count: inputs.count)
+            var misses: [(index: Int, input: CVPixelBuffer, key: UInt64)] = []
+            for (i, input) in inputs.enumerated() {
+                let key = TileCache.hash(input)
+                if let hit = tileCache.output(for: key, matching: input) {
+                    resolved[i] = hit
+                    tilesReused += 1
+                } else {
+                    misses.append((i, input, key))
+                }
+            }
+            if !misses.isEmpty {
+                let predicted = try await predict(misses.map { $0.input }, on: queue)
+                for (miss, output) in zip(misses, predicted) {
+                    resolved[miss.index] = output
+                    tileCache.store(output, for: miss.key, input: miss.input)
+                }
+            }
+            let outputs = resolved.compactMap { $0 }
+            guard outputs.count == inputs.count else { throw UpscaleError.noModelOutput }
 
             for (tile, outputBuffer) in zip(batch, outputs) {
                 let coreX = Int(tile.sourceRect.minX + tile.keepRect.minX)
@@ -293,7 +317,7 @@ final class CoreMLTileUpscaler: ImageUpscaling {
                 let active = first.union(last).insetBy(dx: CGFloat(config.overlap), dy: CGFloat(config.overlap))
                 onFrame(UpscaleLiveFrame(
                     preview: preview?.snapshot(),
-                    tilesDone: index, tilesTotal: plan.tiles.count,
+                    tilesDone: index, tilesTotal: plan.tiles.count, tilesReused: tilesReused,
                     columns: columns, rows: rows,
                     activeRegion: CGRect(
                         x: active.minX / CGFloat(source.width), y: active.minY / CGFloat(source.height),
@@ -305,7 +329,19 @@ final class CoreMLTileUpscaler: ImageUpscaling {
             }
         }
 
-        // 5. Put the photo's own transparency back over the opaque model output.
+        // 5. Hold the result to the source's real pixels (Detail Lock +
+        //    Halo Guard) while the canvas is still opaque.
+        var fidelityPSNR: Double?
+        if let fidelity = session?.fidelity, fidelity != .off, outputScale > 1 {
+            try Task.checkCancellation()
+            fidelityPSNR = FidelityRefiner.refine(
+                canvas: canvasData, width: output.width, height: output.height, bytesPerRow: canvas.bytesPerRow,
+                source: source.data, sourceWidth: source.width, sourceHeight: source.height, sourceBytesPerRow: source.bytesPerRow,
+                fidelity: fidelity
+            )
+        }
+
+        // 6. Put the photo's own transparency back over the opaque model output.
         if let alphaPlane {
             Self.applyAlpha(alphaPlane, sourceWidth: source.width, sourceHeight: source.height, to: canvasData, width: output.width, height: output.height, bytesPerRow: canvas.bytesPerRow)
         }
@@ -315,7 +351,9 @@ final class CoreMLTileUpscaler: ImageUpscaling {
             image: UIImage(cgImage: stitched, scale: 1, orientation: .up),
             tileCount: plan.tiles.count,
             modelInputSize: CGSize(width: source.width, height: source.height),
-            outputWasCapped: output.capped
+            outputWasCapped: output.capped,
+            fidelityPSNR: fidelityPSNR,
+            tilesReused: tilesReused
         )
     }
 
@@ -492,6 +530,61 @@ final class CoreMLTileUpscaler: ImageUpscaling {
     }
 }
 
+/// Recently seen model inputs and their outputs, keyed by a content hash
+/// and confirmed byte-for-byte before reuse.
+private final class TileCache {
+    private let capacity: Int
+    private var entries: [UInt64: (input: Data, output: CVPixelBuffer)] = [:]
+    private var order: [UInt64] = []
+
+    init(capacity: Int) { self.capacity = capacity }
+
+    /// FNV-1a over each row's pixel bytes (row padding excluded, so two
+    /// identical tiles always hash alike).
+    static func hash(_ buffer: CVPixelBuffer) -> UInt64 {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return 0 }
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        let wordsPerRow = CVPixelBufferGetWidth(buffer) * 4 / 8
+        var h: UInt64 = 0xcbf2_9ce4_8422_2325
+        for row in 0..<CVPixelBufferGetHeight(buffer) {
+            let words = base.advanced(by: row * rowBytes).assumingMemoryBound(to: UInt64.self)
+            for i in 0..<wordsPerRow {
+                h = (h ^ words[i]) &* 0x0000_0100_0000_01b3
+            }
+        }
+        return h
+    }
+
+    private static func bytes(of buffer: CVPixelBuffer) -> Data {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return Data() }
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        let payload = CVPixelBufferGetWidth(buffer) * 4
+        var data = Data(capacity: payload * CVPixelBufferGetHeight(buffer))
+        for row in 0..<CVPixelBufferGetHeight(buffer) {
+            data.append(base.advanced(by: row * rowBytes).assumingMemoryBound(to: UInt8.self), count: payload)
+        }
+        return data
+    }
+
+    func output(for key: UInt64, matching input: CVPixelBuffer) -> CVPixelBuffer? {
+        guard let entry = entries[key], entry.input == Self.bytes(of: input) else { return nil }
+        return entry.output
+    }
+
+    func store(_ output: CVPixelBuffer, for key: UInt64, input: CVPixelBuffer) {
+        guard entries[key] == nil else { return }
+        if order.count >= capacity {
+            entries[order.removeFirst()] = nil
+        }
+        entries[key] = (Self.bytes(of: input), output)
+        order.append(key)
+    }
+}
+
 /// The decoded source photo as raw BGRA memory — what every model input
 /// tile is copied out of.
 private final class PixelPlane {
@@ -500,7 +593,7 @@ private final class PixelPlane {
     let bytesPerRow: Int
     let colorSpace: CGColorSpace
     private let context: CGContext
-    private let data: UnsafeMutableRawPointer
+    let data: UnsafeMutableRawPointer
 
     init?(decoding image: CGImage) {
         let width = image.width

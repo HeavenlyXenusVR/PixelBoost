@@ -57,6 +57,20 @@ struct UpscaleResult {
     /// final canvas was made smaller than asked. The model still processed
     /// every source pixel either way.
     var outputWasCapped: Bool = false
+    /// PSNR (dB) between the source and the result shrunk back to source
+    /// size — how faithfully the upscale reproduces the original. Only
+    /// measured when a fidelity pass ran.
+    var fidelityPSNR: Double? = nil
+    /// Tiles served from the duplicate-tile cache instead of the model.
+    var tilesReused: Int = 0
+
+    /// Same run metadata, new pixels (for post-passes like blend/sharpen).
+    func replacingImage(_ image: UIImage) -> UpscaleResult {
+        UpscaleResult(
+            image: image, tileCount: tileCount, modelInputSize: modelInputSize,
+            outputWasCapped: outputWasCapped, fidelityPSNR: fidelityPSNR, tilesReused: tilesReused
+        )
+    }
 }
 
 enum UpscaleError: LocalizedError {

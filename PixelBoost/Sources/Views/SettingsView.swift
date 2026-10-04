@@ -24,6 +24,8 @@ struct SettingsView: View {
                     scaleRow
                     if provider.quality != .fast {
                         PBRowDivider()
+                        fidelityRow
+                        PBRowDivider()
                         powerRow
                     }
                     if provider.quality == .custom {
@@ -329,6 +331,24 @@ struct SettingsView: View {
         case 72: return "3 days"
         case 168: return "7 days"
         default: return "\(hours) hours"
+        }
+    }
+
+    private var fidelityRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Menu {
+                ForEach(UpscaleFidelity.allCases) { level in
+                    Button(level.displayName) { provider.fidelity = level }
+                }
+            } label: {
+                PBCardRow(icon: "checkmark.seal", label: "Fidelity", value: "\(provider.fidelity.displayName) ›")
+            }
+            .buttonStyle(.plain)
+            Text(provider.fidelity.footnote)
+                .font(.system(size: 12))
+                .foregroundStyle(PBColor.inkDim)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
         }
     }
 

@@ -103,6 +103,9 @@ struct UpscaleLiveFrame {
     /// The batch being processed right now, normalized to 0...1 of the
     /// output frame (top-left origin).
     let activeRegion: CGRect
+    /// Tiles whose input exactly matched an earlier tile, so the earlier
+    /// output was reused instead of running the model again.
+    let tilesReused: Int
     /// Source pixels already through the model.
     let pixelsDone: Int
     let pixelsTotal: Int
@@ -114,14 +117,17 @@ struct UpscaleLiveFrame {
 /// Swift task cancellation; this only adds what tasks can't express.
 final class UpscaleSession: @unchecked Sendable {
     let power: UpscalePower
+    /// Post-model refinement against the source pixels — see `UpscaleFidelity`.
+    let fidelity: UpscaleFidelity
     /// Called from a background thread, throttled to `power.previewInterval`.
     let onFrame: ((UpscaleLiveFrame) -> Void)?
 
     private let lock = NSLock()
     private var paused = false
 
-    init(power: UpscalePower, onFrame: ((UpscaleLiveFrame) -> Void)? = nil) {
+    init(power: UpscalePower, fidelity: UpscaleFidelity = .off, onFrame: ((UpscaleLiveFrame) -> Void)? = nil) {
         self.power = power.effective
+        self.fidelity = fidelity
         self.onFrame = onFrame
     }
 

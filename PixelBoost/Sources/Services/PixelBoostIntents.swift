@@ -37,7 +37,7 @@ struct UpscalePhotoIntent: AppIntent {
             requestedScale: 4,
             // Shortcuts runs unattended, often in the background: keep it
             // on the most battery-friendly path.
-            session: UpscaleSession(power: .efficiency)
+            session: UpscaleSession(power: .efficiency, fidelity: .natural)
         ) { _ in }
         ActionLoggingService.logResult("intent_upscale", error: outcome.error)
         // An intent process can be torn down the moment it returns, so
