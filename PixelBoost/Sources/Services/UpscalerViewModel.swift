@@ -646,9 +646,47 @@ final class UpscalerViewModel: ObservableObject {
         // how many results the choice was made from, which is the
         // difference between "best of 6" and "the only one that worked".
         recordComparisonPick(result.choice)
+        let input = sourceImage
         skipNextAutoCloudBackup = true
         resultImage = result.image
         comparisonResults = []
+        uploadComparisonPick(result, source: input)
+    }
+
+    /// A sweep's candidate runs deliberately skip the per-run cloud upload
+    /// (see `UpscaleRunner.log`) — otherwise one Compare Models run pushed
+    /// the source once per candidate and every candidate's result, for a
+    /// set of images the user is about to discard all but one of. The
+    /// upload happens here instead, once, for the result actually chosen.
+    private func uploadComparisonPick(_ result: ModelComparisonResult, source: UIImage?) {
+        let temporarySave = provider.temporaryCloudSaveEnabled
+        let autoBackup = provider.autoCloudBackupEnabled
+        guard temporarySave || autoBackup else { return }
+        let ttlHours = provider.temporaryCloudTTLHours
+        let image = result.image
+        let label = [result.choice.modelName, "\(provider.scaleFactor.rawValue)x", "compare_pick"]
+            .joined(separator: " · ")
+        // Same assertion the per-run upload takes: this starts right as the
+        // user finishes choosing, which is exactly when they're likely to
+        // leave the app.
+        let assertion = Self.beginBackgroundWork()
+        Task.detached(priority: .utility) {
+            defer { Task { @MainActor in Self.endBackgroundWork(assertion) } }
+            var lastError: Error?
+            if autoBackup, let source {
+                do { try await ImportExportService.upload(source, kind: .imports, isAuto: true) } catch { lastError = error }
+            }
+            do {
+                try await ImportExportService.upload(
+                    image, kind: .exports, ttlHours: ttlHours, isAuto: true, label: label
+                )
+            } catch { lastError = error }
+            if let lastError {
+                await CloudBackupStatus.shared.reportFailure(lastError)
+            } else {
+                await CloudBackupStatus.shared.reportSuccess()
+            }
+        }
     }
 
     /// Cuts the subject out of the *current* image — the most recent

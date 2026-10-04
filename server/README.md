@@ -104,6 +104,21 @@ was requested — it's best-effort and falls back silently),
 `source_noise_sigma` (the measurement that decided it, so a badly-set
 threshold is visible rather than just its consequences), and `free_disk_mb`.
 
+`peak_memory_mb` is now an actual in-run high-water mark, sampled per tile
+batch and across the final stitch (see `CoreMLTileUpscaler`). It used to be
+a single reading taken at log time — i.e. after the run finished and every
+tile buffer had been released — which on real telemetry reported 76-198MB
+for 4x upscales whose own memory warnings had recorded 2,160MB. It was
+measuring the idle footprint and calling it a peak. Strategies that don't
+sample (Lanczos, and failed runs that never got far enough) still fall back
+to the old after-the-fact reading.
+
+Note also that a Compare Models sweep writes a history row per candidate
+but uploads **no** candidate images: uploading per run meant one sweep
+pushed the source once per candidate (byte-identical copies) plus every
+candidate result — ~48MB for a single sweep of a 498x336 photo, of which
+the user keeps one image. The chosen result is uploaded once, on the pick.
+
 `upscale_history` also carries per-run context beyond the original
 dimensions/timing columns: `detail_level`, `model_input_width/height` (what
 the model actually saw, after any detail-budget downscale — the column that

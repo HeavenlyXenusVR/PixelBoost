@@ -194,6 +194,18 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         let tileCache = TileCache(capacity: 32)
         var tilesReused = 0
 
+        // Highest footprint seen *while the work is happening*, not after.
+        // Sampled per batch below plus at the two allocation spikes that
+        // come after the loop (the fidelity pass and the final stitch) —
+        // `task_info` is a cheap mach call, so per-batch costs nothing
+        // against an inference that takes milliseconds.
+        var peakMemoryMB = TelemetryService.usedMemoryMB ?? 0
+        func sampleMemory() {
+            if let used = TelemetryService.usedMemoryMB, used > peakMemoryMB {
+                peakMemoryMB = used
+            }
+        }
+
         var lastProgressAt = Date.distantPast
         var lastFrameAt = Date.distantPast
         var pixelsDone = 0
@@ -201,6 +213,7 @@ final class CoreMLTileUpscaler: ImageUpscaling {
 
         var index = 0
         while index < plan.tiles.count {
+            sampleMemory()
             try Task.checkCancellation()
             try await session?.waitWhilePaused()
 
@@ -347,14 +360,20 @@ final class CoreMLTileUpscaler: ImageUpscaling {
             Self.applyAlpha(alphaPlane, sourceWidth: source.width, sourceHeight: source.height, to: canvasData, width: output.width, height: output.height, bytesPerRow: canvas.bytesPerRow)
         }
 
+        // The stitch allocates the whole output image at once and is
+        // usually the true high-water mark of the entire run, so sample
+        // across it rather than only before.
+        sampleMemory()
         guard let stitched = canvas.makeImage() else { throw UpscaleError.renderFailed }
+        sampleMemory()
         return UpscaleResult(
             image: UIImage(cgImage: stitched, scale: 1, orientation: .up),
             tileCount: plan.tiles.count,
             modelInputSize: CGSize(width: source.width, height: source.height),
             outputWasCapped: output.capped,
             fidelityPSNR: fidelityPSNR,
-            tilesReused: tilesReused
+            tilesReused: tilesReused,
+            peakMemoryMB: peakMemoryMB
         )
     }
 

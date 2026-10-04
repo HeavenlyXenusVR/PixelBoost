@@ -251,7 +251,10 @@ enum UpscaleRunner {
             low_power_mode: settings.context.lowPowerMode,
             battery_level: settings.context.batteryLevel,
             physical_memory_mb: settings.context.physicalMemoryMB,
-            peak_memory_mb: TelemetryService.usedMemoryMB,
+            // The in-run high-water mark when the strategy tracks one;
+            // the old after-the-fact sample only as a fallback (Lanczos,
+            // and any failed run that never got far enough to measure).
+            peak_memory_mb: result?.peakMemoryMB ?? TelemetryService.usedMemoryMB,
             run_kind: settings.runKind,
             comparison_id: settings.comparisonID,
             fidelity_psnr: result?.fidelityPSNR,
@@ -286,7 +289,18 @@ enum UpscaleRunner {
         let uploadLabel = [info.modelName, settings.requestedScale.map { "\($0)x" }, settings.detailLevel]
             .compactMap { $0 }
             .joined(separator: " · ")
-        guard TelemetryService.isEnabled || temporarySaveEnabled || autoCloudBackupEnabled else { return }
+        // A Compare Models sweep is N runs through here, so uploading per
+        // run meant one sweep pushed the source N times over (byte-identical
+        // copies) and every candidate result — measured on real telemetry as
+        // ~48MB for a single sweep of a 498x336 photo, of which the user
+        // keeps exactly one image. The history row below is still written
+        // for every candidate (that's the per-model data the sweep exists to
+        // collect); only the image bytes wait for
+        // `UpscalerViewModel.pickComparisonResult`, which uploads the one
+        // result actually chosen.
+        let uploadsImages = settings.runKind != "compare"
+        let wantsImageUpload = uploadsImages && (temporarySaveEnabled || autoCloudBackupEnabled)
+        guard TelemetryService.isEnabled || wantsImageUpload else { return }
         // `UpscalerViewModel.beginBackgroundWork()` covers the upscale
         // itself and is released the moment it finishes — which is exactly
         // when this work starts. Without its own assertion, a result upload
@@ -305,7 +319,7 @@ enum UpscaleRunner {
             // since iOS kills the app outright when one expires unended.
             defer { Task { @MainActor in Self.endUploadAssertion(assertion) } }
             let historyID = TelemetryService.isEnabled ? await UpscaleLoggingService.log(entry) : nil
-            guard let outputImage, temporarySaveEnabled || autoCloudBackupEnabled else { return }
+            guard let outputImage, wantsImageUpload else { return }
             // Independent, best-effort attempts (a failed source upload
             // shouldn't skip the arguably-more-important result upload) —
             // whichever fails last just wins the status banner, which is
@@ -315,14 +329,12 @@ enum UpscaleRunner {
             if autoCloudBackupEnabled {
                 do { try await ImportExportService.upload(sourceImage, kind: .imports, isAuto: true) } catch { lastError = error }
             }
-            if temporarySaveEnabled || autoCloudBackupEnabled {
-                do {
-                    try await ImportExportService.upload(
-                        outputImage, kind: .exports, historyID: historyID,
-                        ttlHours: temporaryTTLHours, isAuto: true, label: uploadLabel
-                    )
-                } catch { lastError = error }
-            }
+            do {
+                try await ImportExportService.upload(
+                    outputImage, kind: .exports, historyID: historyID,
+                    ttlHours: temporaryTTLHours, isAuto: true, label: uploadLabel
+                )
+            } catch { lastError = error }
             if let lastError {
                 await CloudBackupStatus.shared.reportFailure(lastError)
             } else {

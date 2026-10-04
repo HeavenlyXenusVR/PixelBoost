@@ -63,12 +63,23 @@ struct UpscaleResult {
     var fidelityPSNR: Double? = nil
     /// Tiles served from the duplicate-tile cache instead of the model.
     var tilesReused: Int = 0
+    /// Highest resident footprint actually observed *during* the run, in MB.
+    ///
+    /// The log used to fill its `peak_memory_mb` column with a single
+    /// `TelemetryService.usedMemoryMB` sample taken at log time — i.e. after
+    /// the run had finished and every tile buffer had been released. On real
+    /// telemetry that read 76-198MB for 4x upscales whose own memory
+    /// warnings had recorded 2,160MB, which is to say it was measuring the
+    /// idle footprint and calling it a peak. nil for strategies that don't
+    /// sample (the caller falls back to the old after-the-fact reading).
+    var peakMemoryMB: Int? = nil
 
     /// Same run metadata, new pixels (for post-passes like blend/sharpen).
     func replacingImage(_ image: UIImage) -> UpscaleResult {
         UpscaleResult(
             image: image, tileCount: tileCount, modelInputSize: modelInputSize,
-            outputWasCapped: outputWasCapped, fidelityPSNR: fidelityPSNR, tilesReused: tilesReused
+            outputWasCapped: outputWasCapped, fidelityPSNR: fidelityPSNR,
+            tilesReused: tilesReused, peakMemoryMB: peakMemoryMB
         )
     }
 }
