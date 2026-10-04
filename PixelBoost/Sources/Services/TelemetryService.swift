@@ -122,6 +122,13 @@ enum TelemetryService {
     /// A hard ceiling so a long offline session can't grow this without
     /// bound; oldest events are dropped first.
     private static let maxBuffered = 500
+    /// The server rejects a `POST /log/actions` body of more than 200
+    /// entries outright (413, see server/main.py's `log_actions`), so a
+    /// flush of a buffer that grew past that — which `maxBuffered` of 500
+    /// explicitly allows after an offline stretch — would fail as a whole
+    /// and drop every event in it. Flushes go out in chunks no larger than
+    /// this instead.
+    private static let maxPerRequest = 200
 
     static func record(
         _ action: String,
@@ -190,17 +197,26 @@ enum TelemetryService {
         guard !buffer.isEmpty else { return }
         let batch = buffer
         buffer.removeAll(keepingCapacity: true)
+        let chunks = stride(from: 0, to: batch.count, by: maxPerRequest).map {
+            Array(batch[$0 ..< min($0 + maxPerRequest, batch.count)])
+        }
         Task.detached(priority: .background) {
-            do {
-                var request = try APIClient.request(path: "log/actions", method: "POST")
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONEncoder().encode(ActionLogBatch(entries: batch))
-                _ = try await APIClient.data(for: request)
-            } catch {
-                // Dropped, not retried: this is a debug log, and a retry
-                // queue that outlives the process would be a bigger
-                // mechanism than the data is worth.
-                print("TelemetryService: dropped \(batch.count) events — \(error.localizedDescription)")
+            // Sequentially, not a task group: a flush is background debug
+            // logging, and one oversized buffer shouldn't fire several
+            // concurrent uploads.
+            for chunk in chunks {
+                do {
+                    var request = try APIClient.request(path: "log/actions", method: "POST")
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.httpBody = try JSONEncoder().encode(ActionLogBatch(entries: chunk))
+                    _ = try await APIClient.data(for: request)
+                } catch {
+                    // Dropped, not retried: this is a debug log, and a retry
+                    // queue that outlives the process would be a bigger
+                    // mechanism than the data is worth. Only this chunk is
+                    // lost — the rest of the flush still goes out.
+                    print("TelemetryService: dropped \(chunk.count) events — \(error.localizedDescription)")
+                }
             }
         }
     }
