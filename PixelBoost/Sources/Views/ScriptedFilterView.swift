@@ -122,14 +122,8 @@ struct ScriptedFilterView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Scripted Filter")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Scripted Filter")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
             .sheet(isPresented: $showingSavedList) {
                 savedScriptsSheet
             }
@@ -146,7 +140,7 @@ struct ScriptedFilterView: View {
         }
         guard current !== lastBase else { return }
         lastBase = current
-        previewSource = Self.downscaled(current, maxDimension: 500)
+        previewSource = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 500)
         previewImage = nil
         errorMessage = nil
     }
@@ -244,7 +238,7 @@ struct ScriptedFilterView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "chevron.left.slash.chevron.right", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .scripted)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

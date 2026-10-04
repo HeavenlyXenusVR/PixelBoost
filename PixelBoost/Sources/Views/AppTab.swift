@@ -1,30 +1,79 @@
 import Foundation
 
-/// Every top-level destination in the app. There are more than the ~5 iOS
-/// puts in a native `TabView` before collapsing the rest into an
-/// auto-generated "More" list, so `RootView` builds its own bar instead of
-/// using `TabView`: 5 always-visible primary tabs (`primaryTabs`) plus a
-/// center "Tools" button opening a drawer sheet for the rest (`moreTabs`).
+/// Every top-level destination in the app. There are far more than the ~5
+/// a native `TabView` shows, so `RootView` builds its own floating dock:
+/// five fixed destinations (`primaryTabs`), with every editing tool reached
+/// through the `.tools` library screen.
 enum AppTab: String, CaseIterable, Identifiable {
-    case home, cutout, enhance, adjust, selective, crop, frames, filters, pixelArt, scripted, overlays, erase, restore, renderDenoise, normalMap, seamlessTexture, depthFog, aoBlend, lut, clone, batch, cloud, history, settings
+    case home, tools, cutout, enhance, adjust, selective, crop, frames, filters, pixelArt, scripted, overlays, erase, restore, renderDenoise, normalMap, seamlessTexture, depthFog, aoBlend, lut, clone, batch, cloud, history, settings
 
     var id: String { rawValue }
 
-    /// The 5 tabs always visible in the bottom bar; everything else lives
-    /// behind the center "Tools" button's drawer sheet (see `RootView`).
-    /// Still just a `Bool` split of the same cases, not a separate type —
-    /// every tab keeps driving the same always-mounted `ZStack` in
-    /// `RootView` regardless of which bucket it's in, so changing *how* a
-    /// tab is reached never touches the state-preservation behavior that
-    /// `ZStack` exists for.
-    static let primaryTabs: [AppTab] = [.home, .adjust, .filters, .batch, .settings]
-    static let moreTabs: [AppTab] = allCases.filter { !primaryTabs.contains($0) }
+    /// The dock, left to right.
+    static let primaryTabs: [AppTab] = [.home, .tools, .batch, .history, .settings]
 
     var isPrimary: Bool { Self.primaryTabs.contains(self) }
+
+    /// A screen reached from the Tools library (lights up the Tools slot
+    /// in the dock while it's open).
+    var isTool: Bool { !isPrimary }
+
+    /// How the Tools library groups its tiles.
+    enum Category: String, CaseIterable, Identifiable {
+        case fix = "Fix & Enhance"
+        case adjust = "Tone & Color"
+        case create = "Create"
+        case texture = "3D & Textures"
+        case library = "Library"
+
+        var id: String { rawValue }
+
+        var tabs: [AppTab] {
+            switch self {
+            case .fix: return [.enhance, .restore, .renderDenoise, .cutout, .erase, .clone]
+            case .adjust: return [.adjust, .selective, .crop, .filters, .lut]
+            case .create: return [.frames, .overlays, .pixelArt, .scripted]
+            case .texture: return [.normalMap, .seamlessTexture, .depthFog, .aoBlend]
+            case .library: return [.cloud]
+            }
+        }
+    }
+
+    /// One line for the Tools library tile.
+    var blurb: String {
+        switch self {
+        case .home: return "Full-resolution AI upscaling"
+        case .tools: return "Every editing tool"
+        case .cutout: return "Lift the subject, swap the background"
+        case .enhance: return "One-tap exposure and color"
+        case .adjust: return "Light, color and tone curve"
+        case .selective: return "Paint where an adjustment applies"
+        case .crop: return "Rotate and crop to a ratio"
+        case .frames: return "Borders and shaped frames"
+        case .filters: return "Film-style looks"
+        case .pixelArt: return "Retro palettes, crisp blocks"
+        case .scripted: return "Per-pixel Lua scripts"
+        case .overlays: return "Text and emoji on top"
+        case .erase: return "Paint out distractions"
+        case .restore: return "Denoise and sharpen faces"
+        case .renderDenoise: return "Clean noisy 3D renders"
+        case .normalMap: return "Generate a normal map"
+        case .seamlessTexture: return "Make a tileable texture"
+        case .depthFog: return "Atmospheric depth haze"
+        case .aoBlend: return "Ambient-occlusion shading"
+        case .lut: return "Apply a .cube color LUT"
+        case .clone: return "Copy pixels from a source"
+        case .batch: return "Queue many photos"
+        case .cloud: return "Temporary cloud copies"
+        case .history: return "Past upscales and stats"
+        case .settings: return "Defaults, export, power"
+        }
+    }
 
     var title: String {
         switch self {
         case .home: return "Upscale"
+        case .tools: return "Tools"
         case .cutout: return "Cutout"
         case .enhance: return "Enhance"
         case .adjust: return "Adjust"
@@ -54,6 +103,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .home: return "wand.and.stars"
+        case .tools: return "square.grid.2x2"
         case .cutout: return "scissors"
         case .enhance: return "wand.and.rays"
         case .adjust: return "slider.horizontal.3"

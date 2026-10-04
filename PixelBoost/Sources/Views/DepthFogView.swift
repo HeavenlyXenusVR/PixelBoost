@@ -81,12 +81,7 @@ struct DepthFogView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Depth Fog")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .pbScreen("Depth Fog")
             .fileImporter(
                 isPresented: $isPresentingDepthImporter,
                 allowedContentTypes: [UTType(filenameExtension: "exr") ?? .data]
@@ -98,8 +93,7 @@ struct DepthFogView: View {
             }
             .onChange(of: intensity) { _, _ in updatePreview() }
             .onChange(of: fogColor) { _, _ in updatePreview() }
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -171,7 +165,7 @@ struct DepthFogView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "cloud.fog", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .depthFog)
     }
 }
 

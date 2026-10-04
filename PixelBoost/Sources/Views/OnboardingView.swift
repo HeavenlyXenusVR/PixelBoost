@@ -11,30 +11,30 @@ struct OnboardingView: View {
 
     private let pages: [OnboardingPage] = [
         OnboardingPage(
-            systemImage: "sparkles",
-            title: "PixelBoost",
-            message: "Turn blurry or low-resolution photos into sharp, higher-resolution images using an on-device AI model — nothing ever leaves your phone unless you choose to back it up."
+            systemImage: nil,
+            title: "Every pixel, upscaled",
+            message: "PixelBoost runs your whole photo through an on-device AI model at full resolution — tile by tile, pixel by pixel. Nothing is shrunk first, and nothing leaves your phone unless you choose to back it up."
         ),
         OnboardingPage(
-            systemImage: "wand.and.stars",
-            title: "Compare, Then Choose",
-            message: "Choose a photo, and Auto runs every bundled model on the full image so you can look at each result and pick the one you like — or skip straight to a specific model (General Photo, Anime, Portrait…) in Settings."
+            systemImage: "square.grid.3x3.middle.filled",
+            title: "Watch it work",
+            message: "See finished tiles fill in live, pause any time to let the phone cool, and check the result pixel-for-pixel against the original in the Pixel Inspector."
         ),
         OnboardingPage(
-            systemImage: "icloud",
-            title: "Cloud Features Are Optional",
-            message: "Batch upscale, history, and cloud backup all work fully offline by default. Set a server URL in Settings only if you want debug logging, temporary cloud storage, or custom presets synced."
+            systemImage: "leaf",
+            title: "Easy on the battery",
+            message: "Pick a Power mode: Efficiency keeps work on the Neural Engine and paces itself as the phone warms. Low Power Mode switches to it automatically."
+        ),
+        OnboardingPage(
+            systemImage: "square.grid.2x2",
+            title: "A full editor, too",
+            message: "Twenty tools — cutout, restore, filters, frames, textures and more — all editing one shared photo, with undo across every edit."
         ),
     ]
 
     var body: some View {
         ZStack {
             PBColor.background.ignoresSafeArea()
-            RadialGradient(
-                colors: [PBColor.accent2.opacity(0.22), .clear],
-                center: UnitPoint(x: 0.5, y: 0.05), startRadius: 20, endRadius: 420
-            )
-            .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 TabView(selection: $page) {
@@ -50,7 +50,7 @@ struct OnboardingView: View {
                         Capsule()
                             .fill(index == page ? AnyShapeStyle(PBColor.accent) : AnyShapeStyle(PBColor.surface3))
                             .frame(width: index == page ? 18 : 6, height: 6)
-                            .animation(.easeInOut(duration: 0.2), value: page)
+                            .animation(PBMotion.isReduced ? nil : .easeInOut(duration: 0.2), value: page)
                     }
                 }
                 .padding(.bottom, 18)
@@ -74,7 +74,8 @@ struct OnboardingView: View {
 }
 
 private struct OnboardingPage {
-    let systemImage: String
+    /// nil shows the app's pixel mark instead of a symbol.
+    let systemImage: String?
     let title: String
     let message: String
 }
@@ -85,14 +86,16 @@ private struct OnboardingPageView: View {
     var body: some View {
         VStack(spacing: 22) {
             Spacer()
-            ZStack {
-                Circle()
-                    .fill(PBColor.accentGradient)
-                    .frame(width: 84, height: 84)
-                    .shadow(color: PBColor.accent2.opacity(0.45), radius: 24, y: 10)
-                Image(systemName: page.systemImage)
-                    .font(.system(size: 34, weight: .semibold))
-                    .foregroundStyle(.white)
+            Group {
+                if let systemImage = page.systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 32, weight: .semibold))
+                        .foregroundStyle(PBColor.accent)
+                        .frame(width: 84, height: 84)
+                        .background(PBColor.accentSoft, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                } else {
+                    PixelMark().frame(width: 84, height: 84)
+                }
             }
             Text(page.title)
                 .pbFont(.display)

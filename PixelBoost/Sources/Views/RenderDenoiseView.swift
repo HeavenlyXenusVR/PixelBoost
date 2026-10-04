@@ -69,14 +69,8 @@ struct RenderDenoiseView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Render Denoise")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Render Denoise")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -121,7 +115,7 @@ struct RenderDenoiseView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "cube", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .renderDenoise)
     }
 }
 

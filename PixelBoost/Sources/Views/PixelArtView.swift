@@ -203,12 +203,7 @@ struct PixelArtView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Pixel Art")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .pbScreen("Pixel Art")
             .onChange(of: blockSize, perform: { _ in updatePreview() })
             .onChange(of: posterize, perform: { _ in updatePreview() })
             .onChange(of: colorLevels, perform: { _ in updatePreview() })
@@ -225,8 +220,7 @@ struct PixelArtView: View {
             .onChange(of: spriteExportEnabled, perform: { _ in updatePreview() })
             .onChange(of: spriteSize, perform: { _ in updatePreview() })
             .onChange(of: showGrid, perform: { _ in updatePreview() })
-            .onChange(of: viewModel.imageVersion, perform: { _ in refreshFromCurrentImage() })
-            .onAppear { refreshFromCurrentImage() }
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -242,7 +236,7 @@ struct PixelArtView: View {
         }
         guard current !== lastBase else { return }
         lastBase = current
-        previewSource = Self.downscaled(current, maxDimension: 800)
+        previewSource = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 800)
         detectSubjectIfNeeded()
         updatePreview()
     }
@@ -346,7 +340,7 @@ struct PixelArtView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "square.grid.3x3.fill", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .pixelArt)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

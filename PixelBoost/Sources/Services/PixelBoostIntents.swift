@@ -34,7 +34,10 @@ struct UpscalePhotoIntent: AppIntent {
         ])
         let outcome = await UpscaleRunner.run(
             sourceImage, using: upscaler, sourceFileSizeBytes: photo.data.count,
-            requestedScale: 4
+            requestedScale: 4,
+            // Shortcuts runs unattended, often in the background: keep it
+            // on the most battery-friendly path.
+            session: UpscaleSession(power: .efficiency)
         ) { _ in }
         ActionLoggingService.logResult("intent_upscale", error: outcome.error)
         // An intent process can be torn down the moment it returns, so

@@ -33,6 +33,41 @@ up 3D-render noise — see "Render Denoise" below and
 
 ---
 
+## Pixel-by-pixel engine & Darkroom redesign
+
+- **Every pixel goes through the model.** The old Detail setting shrank
+  photos over 4/8/16 MP before inference; that's gone. The source is
+  decoded once into raw BGRA memory in its own color space (Display P3
+  stays P3), each 128×128 model tile is copied straight out of it with
+  clamp-to-edge borders, the model runs directly via
+  `MLModel.predictions(from:)` in small batches (Vision is only a
+  fallback), and at native scale each tile's kept core is row-copied into
+  the canvas — the stitched image is bit-for-bit what the model produced.
+  Transparency is preserved (un-premultiplied in, alpha resampled back).
+  `Models/testbench/verify_pixel_engine.py` checks the tiling writes every
+  output pixel exactly once and matches an untiled reference.
+- **Power modes instead of Detail** — Efficiency (Neural Engine + CPU, no
+  GPU, utility QoS, paces itself when warm), Balanced, Performance. Low
+  Power Mode forces Efficiency. Thermal pacing backs off between batches.
+- **Live upscale view** — finished tiles of real output paint over the
+  dimmed original with the tile grid and active batch outlined; pause,
+  resume, cancel; tiles/megapixels/ETA. Runs keep going briefly in the
+  background, and a pill over the dock shows progress from any tab.
+- **Run plan before you tap** — exact output size, tile count, an ETA
+  learned from this device's previous runs, and an honest note when the
+  output had to be capped for memory (the input never is).
+- **Pixel Inspector** — real full-resolution before/after pixels under a
+  draggable crosshair at nearest-neighbor magnification, with hex colors.
+- **Undo/redo across every tool**, memory-budgeted.
+- **Paste from clipboard**, and every tool's empty state opens the photo
+  picker in place.
+- **New shell** — a floating dock (Upscale · Tools · Batch · History ·
+  Settings) and a searchable, categorized Tools library.
+- **Battery-minded UI** — flat surfaces instead of live blur materials,
+  almost no shadows, motion off in Low Power Mode/Reduce Motion, tabs
+  built on first visit, hidden tabs skip photo-change work until shown,
+  previews built from one cached 2048px copy, throttled progress updates.
+
 ## Features
 
 - **Bottom tab bar** — every screen (Upscale plus all thirteen editing tools,

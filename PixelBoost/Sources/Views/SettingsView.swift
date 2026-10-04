@@ -24,7 +24,7 @@ struct SettingsView: View {
                     scaleRow
                     if provider.quality != .fast {
                         PBRowDivider()
-                        detailRow
+                        powerRow
                     }
                     if provider.quality == .custom {
                         PBRowDivider()
@@ -50,7 +50,7 @@ struct SettingsView: View {
                         loadingRow(text: "Loading model…")
                     }
                 }
-                PBFootnote(text: "Auto runs every bundled model on the whole photo and shows you all of them side by side to pick from — Batch Upscale (nobody's watching per photo there) still picks automatically via a quick sharpness test instead. Fast skips the model entirely (plain resampling, instant). Standard/Best trade speed for tile-seam quality; Custom hands you that same tile-overlap dial directly instead of a fixed preset. Output Scale always analyzes at each model's native 4x, then resizes down to your chosen size — 2x/3x still benefit from the model's full detail, not a shortcut. Detail sets how much of your photo's real resolution the model works from: the biggest lever on sharpness, and on time and heat. Upscale Strength blends the model's result with a plain resize — 100% is the model's full output, so turn it down only to dial back an over-aggressive or artifact-prone result. Anti-Aliasing (off by default) adds a gentle smoothing pass to cut jagged edges, at the cost of some sharpness.")
+                PBFootnote(text: "Auto runs every bundled model on the whole photo and shows you all of them side by side to pick from — Batch Upscale (nobody's watching per photo there) still picks automatically via a quick sharpness test instead. Fast skips the model entirely (plain resampling, instant). Standard/Best trade speed for tile-seam quality; Custom hands you that same tile-overlap dial directly instead of a fixed preset. Output Scale always analyzes at each model's native 4x, then resizes down to your chosen size — 2x/3x still benefit from the model's full detail, not a shortcut. Every upscale runs every pixel of your photo through the model at full resolution; Power only decides where that work runs and how hard it pushes the battery. Upscale Strength blends the model's result with a plain resize — 100% is the model's full output, so turn it down only to dial back an over-aggressive or artifact-prone result. Anti-Aliasing (off by default) adds a gentle smoothing pass to cut jagged edges, at the cost of some sharpness.")
 
                 CustomPresetsCard()
                 ICloudPresetsCard()
@@ -163,7 +163,7 @@ struct SettingsView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                 }
-                PBFootnote(text: "Records what each upscale actually did — model, detail level, the resolution the model really saw, timing, thermal state, memory — plus which tools you use and any errors, to the server below. No photo content, just numbers and setting names. Turning this off stops every event, snapshot and upscale log the app sends.")
+                PBFootnote(text: "Records what each upscale actually did — model, power mode, the resolution the model saw, timing, thermal state, memory — plus which tools you use and any errors, to the server below. No photo content, just numbers and setting names. Turning this off stops every event, snapshot and upscale log the app sends.")
 
                 PBSectionLabel(title: "Appearance")
                 PBCard {
@@ -245,12 +245,7 @@ struct SettingsView: View {
             }
             .padding(16)
         }
-        .pbReserveTabBarSpace()
-        .background(PBColor.background.ignoresSafeArea())
-        .navigationTitle("Settings")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(PBColor.background, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .pbScreen("Settings", tool: false)
         .sheet(isPresented: $isPresentingModelPicker) {
             ModelPickerView(provider: provider)
         }
@@ -337,17 +332,21 @@ struct SettingsView: View {
         }
     }
 
-    private var detailRow: some View {
+    private var powerRow: some View {
         VStack(alignment: .leading, spacing: 0) {
             Menu {
-                ForEach(UpscaleDetail.allCases) { level in
-                    Button(level.displayName) { provider.detail = level }
+                ForEach(UpscalePower.allCases) { mode in
+                    Button {
+                        provider.power = mode
+                    } label: {
+                        Label(mode.displayName, systemImage: mode.systemImage)
+                    }
                 }
             } label: {
-                PBCardRow(icon: "scope", label: "Detail", value: "\(provider.detail.displayName) ›")
+                PBCardRow(icon: provider.power.systemImage, label: "Power", value: "\(provider.power.displayName) ›")
             }
             .buttonStyle(.plain)
-            Text(provider.detail.footnote)
+            Text(provider.power.footnote + (ProcessInfo.processInfo.isLowPowerModeEnabled ? " Low Power Mode is on, so Efficiency is used regardless." : ""))
                 .font(.system(size: 12))
                 .foregroundStyle(PBColor.inkDim)
                 .padding(.horizontal, 14)

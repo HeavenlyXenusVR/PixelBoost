@@ -10,20 +10,36 @@ struct ModelComparisonResult: Identifiable {
     let sharpnessScore: Double
 }
 
+/// What the last finished upscale did — shown under the result.
+struct UpscaleRunSummary {
+    let modelName: String
+    let seconds: TimeInterval
+    let tiles: Int?
+    let outputSize: CGSize
+    let outputWasCapped: Bool
+}
+
 @MainActor
 final class UpscalerViewModel: ObservableObject {
-    @Published var sourceImage: UIImage? { didSet { imageVersion += 1 } }
+    @Published var sourceImage: UIImage? {
+        didSet {
+            imageVersion += 1
+            refreshDisplayCopy(of: sourceImage, into: \.displaySource)
+        }
+    }
     /// Every editing tab (Filters, Adjust, Crop, Cutout, ...) writes its
     /// "Apply" result straight to this property, so it's the one place
     /// that sees every image change regardless of which tool produced it —
-    /// the natural hook for Settings' "Auto Cloud Backup" toggle to cover
-    /// "any image change," not just Upscale. `upscale()`/
-    /// `pickComparisonResult()` set `skipNextAutoCloudBackup` first: those
-    /// two assignments came from a run `UpscaleRunner.log` already uploaded
-    /// (when the setting's on), so this would otherwise double-upload them.
+    /// the natural hook for Auto Cloud Backup and for the undo history.
+    /// `upscale()`/`pickComparisonResult()` set `skipNextAutoCloudBackup`
+    /// first: `UpscaleRunner.log` already uploaded those.
     @Published var resultImage: UIImage? {
         didSet {
             imageVersion += 1
+            refreshDisplayCopy(of: resultImage, into: \.displayResult)
+            if !isRestoringHistory {
+                pushUndo(oldValue)
+            }
             if skipNextAutoCloudBackup {
                 skipNextAutoCloudBackup = false
             } else {
@@ -32,6 +48,56 @@ final class UpscalerViewModel: ObservableObject {
         }
     }
     private var skipNextAutoCloudBackup = false
+
+    /// Screen-sized copies of the source/result (longest side 2048),
+    /// rebuilt off the main thread once per image change. Every preview in
+    /// the app reads these instead of handing a tens-of-megapixel image to
+    /// SwiftUI, which used to re-downsample on every body evaluation —
+    /// several times a second while a progress bar was moving.
+    @Published private(set) var displaySource: UIImage?
+    @Published private(set) var displayResult: UIImage?
+
+    private func refreshDisplayCopy(of image: UIImage?, into keyPath: ReferenceWritableKeyPath<UpscalerViewModel, UIImage?>) {
+        let isSource = keyPath == \UpscalerViewModel.displaySource
+        setDisplayMatches(isSource, false)
+        guard let image else {
+            self[keyPath: keyPath] = nil
+            return
+        }
+        if max(image.size.width, image.size.height) <= 2048 {
+            self[keyPath: keyPath] = image
+            setDisplayMatches(isSource, true)
+            return
+        }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let copy = image.downsampledForDisplay(maxDimension: 2048)
+            await MainActor.run {
+                guard let self else { return }
+                // Drop a stale copy if the image changed again meanwhile.
+                let current = isSource ? self.sourceImage : self.resultImage
+                if current === image {
+                    self[keyPath: keyPath] = copy
+                    self.setDisplayMatches(isSource, true)
+                }
+            }
+        }
+    }
+
+    private func setDisplayMatches(_ isSource: Bool, _ value: Bool) {
+        if isSource { displaySourceMatches = value } else { displayResultMatches = value }
+    }
+
+    /// The cheapest image to build an on-screen preview of `image` from:
+    /// the cached 2048px display copy when it belongs to `image`, else
+    /// `image` itself. Tool tabs downscale from this to their preview
+    /// size, so a 48 MP result costs a 2048px resample instead of a full one.
+    func previewBase(for image: UIImage) -> UIImage {
+        if image === resultImage, let displayResult, displayResultMatches { return displayResult }
+        if image === sourceImage, let displaySource, displaySourceMatches { return displaySource }
+        return image
+    }
+    private var displayResultMatches = false
+    private var displaySourceMatches = false
 
     private func autoUploadResultIfEnabled() {
         guard provider.autoCloudBackupEnabled, let image = resultImage else { return }
@@ -44,28 +110,25 @@ final class UpscalerViewModel: ObservableObject {
             }
         }
     }
-    /// Bumped whenever `sourceImage`/`resultImage` change. Every editing
-    /// tab is a persistent tab (see `RootView`) rather than a modal handed
-    /// a fresh image each time it's opened, so each one needs some way to
-    /// notice "the current photo changed while I was in the background"
-    /// (e.g. Filters applied while you were sitting on the Adjust tab) —
-    /// `UIImage` isn't `Equatable`, so `.onChange(of: resultImage)` isn't
-    /// possible directly; tabs watch this counter instead.
+    /// Bumped whenever `sourceImage`/`resultImage` change, so persistent
+    /// tool tabs can notice "the current photo changed" — `UIImage` isn't
+    /// `Equatable`, so `.onChange(of: resultImage)` isn't possible directly.
     @Published private(set) var imageVersion = 0
     @Published var isUpscaling = false
     @Published var progress: Double = 0
     @Published var errorMessage: String?
     @Published var savedConfirmation = false
-    /// What the most recent `saveResultToPhotos()` actually did — read by
-    /// `ContentView`'s confirmation alert so it can say which one happened
-    /// instead of a fixed message that's wrong half the time. See
-    /// `PhotoLibrarySaver.SaveOutcome`.
     @Published var lastSaveOutcome: PhotoLibrarySaver.SaveOutcome?
 
-    /// Populated by `compareModels()` — every bundled model's full result
-    /// for the current photo, for the user to look through and pick from.
-    /// Non-empty is what tells `ContentView` to present the comparison
-    /// gallery; clearing it (picking one, or dismissing) hides it again.
+    /// Live view of the running upscale (tile grid + progressively filled
+    /// preview). nil when nothing is running.
+    @Published private(set) var liveFrame: UpscaleLiveFrame?
+    @Published private(set) var isPaused = false
+    @Published private(set) var runStartedAt: Date?
+    @Published private(set) var lastRunSummary: UpscaleRunSummary?
+    private var runTask: Task<Void, Never>?
+    private var session: UpscaleSession?
+
     @Published var comparisonResults: [ModelComparisonResult] = []
     @Published var isComparing = false
     @Published var comparisonProgress: Double = 0
@@ -74,26 +137,84 @@ final class UpscalerViewModel: ObservableObject {
 
     let provider: UpscalerProvider
 
-    /// Captured at picker-load time from the original (still-encoded) photo
-    /// data — a decoded UIImage/CGImage has no notion of "file size", so
-    /// this is the only point this is ever available.
     private var sourceFileSizeBytes: Int?
-
-    /// Also captured at picker-load time (`PhotosPickerItem.itemIdentifier`)
-    /// — lets `saveResultToPhotos()` overwrite the original asset in place
-    /// by default instead of always adding a duplicate. `nil` for anything
-    /// the picker couldn't hand back an identifier for, in which case
-    /// saving just falls back to adding a new asset as before.
     private var sourceAssetIdentifier: String?
 
     init(provider: UpscalerProvider) {
         self.provider = provider
     }
 
+    // MARK: - Undo / redo
+
+    /// Every change to `resultImage` (any tool's Apply, an upscale, a
+    /// revert) is undoable. Entries are whole images, so the history is
+    /// bounded by memory rather than count: an eighth of physical RAM, so
+    /// a few big upscales or dozens of small edits fit.
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
+    private var undoStack: [UIImage?] = []
+    private var redoStack: [UIImage?] = []
+    private var isRestoringHistory = false
+    private static let historyByteBudget = Int(ProcessInfo.processInfo.physicalMemory / 8)
+
+    private static func cost(_ image: UIImage?) -> Int {
+        guard let cg = image?.cgImage else { return 0 }
+        return cg.bytesPerRow * cg.height
+    }
+
+    private func pushUndo(_ previous: UIImage?) {
+        undoStack.append(previous)
+        redoStack.removeAll()
+        trimHistory()
+    }
+
+    private func trimHistory() {
+        while undoStack.count > 1,
+              (undoStack + redoStack).reduce(0, { $0 + Self.cost($1) }) > Self.historyByteBudget {
+            undoStack.removeFirst()
+        }
+        while undoStack.count > 30 { undoStack.removeFirst() }
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+    }
+
+    func undo() {
+        guard !isBusy, let previous = undoStack.popLast() else { return }
+        redoStack.append(resultImage)
+        restore(previous)
+        Haptics.lightImpact()
+        ActionLoggingService.log("undo", outcome: "success")
+    }
+
+    func redo() {
+        guard !isBusy, let next = redoStack.popLast() else { return }
+        undoStack.append(resultImage)
+        restore(next)
+        Haptics.lightImpact()
+        ActionLoggingService.log("redo", outcome: "success")
+    }
+
+    private func restore(_ image: UIImage?) {
+        isRestoringHistory = true
+        skipNextAutoCloudBackup = true
+        resultImage = image
+        isRestoringHistory = false
+        trimHistory()
+    }
+
+    private func clearHistory() {
+        undoStack.removeAll()
+        redoStack.removeAll()
+        lastRunSummary = nil
+        trimHistory()
+    }
+
+    var isBusy: Bool { isUpscaling || isComparing || isRemovingBackground }
+
+    // MARK: - Loading
+
     func load(from item: PhotosPickerItem) async {
         errorMessage = nil
-        resultImage = nil
-        sourceAssetIdentifier = item.itemIdentifier
         do {
             guard let data = try await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data),
@@ -101,53 +222,114 @@ final class UpscalerViewModel: ObservableObject {
                 errorMessage = UpscaleError.invalidImage.errorDescription
                 return
             }
+            resultImage = nil
+            sourceAssetIdentifier = item.itemIdentifier
             // Normalize to scale 1 / .up orientation up front — every tiling
             // and drawing calculation downstream assumes 1 point == 1 pixel
             // and no rotation, matching the raw cgImage's pixel grid.
             sourceImage = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
             sourceFileSizeBytes = data.count
+            clearHistory()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    /// Same reset/normalize path as `load(from:)`, but for a photo handed
-    /// in directly (from `SharedPhotoBridge`, i.e. the Share Extension)
-    /// rather than picked from Photos. `sourceAssetIdentifier` stays nil —
-    /// there's no original Photos asset to overwrite, so saving falls back
-    /// to adding a new asset, same as any other identifier-less load.
+    /// For a photo handed in directly (Share Extension, Files, clipboard)
+    /// rather than picked from Photos — no asset to overwrite on save.
     func loadSharedImage(_ image: UIImage) {
+        guard let cgImage = image.cgImage else { return }
         errorMessage = nil
         resultImage = nil
         sourceAssetIdentifier = nil
-        guard let cgImage = image.cgImage else { return }
         sourceImage = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
         sourceFileSizeBytes = nil
+        clearHistory()
     }
 
+    var pasteboardHasImage: Bool { UIPasteboard.general.hasImages }
+
+    /// Pulls a copied image straight off the clipboard — the quickest way
+    /// in from Safari, Messages or a screenshot.
+    func loadFromPasteboard() {
+        guard let image = UIPasteboard.general.image else {
+            errorMessage = "There's no image on the clipboard."
+            Haptics.error()
+            return
+        }
+        // A UIImage from the pasteboard can carry a non-.up orientation;
+        // redraw upright before normalizing to the raw pixel grid.
+        let upright: UIImage
+        if image.imageOrientation == .up {
+            upright = image
+        } else {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            upright = UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: image.size))
+            }
+        }
+        loadSharedImage(upright)
+        Haptics.success()
+        ActionLoggingService.log("paste_import", outcome: "success")
+    }
+
+    // MARK: - Planning
+
+    /// Exact output size, tile count and time estimate for the current
+    /// photo and settings — shown before Upscale is tapped.
+    func plan() -> UpscalePlan? {
+        guard let cg = (resultImage ?? sourceImage)?.cgImage else { return nil }
+        let overlap = provider.quality.overlap(customOverlap: provider.customOverlap)
+        let model = provider.modelChoice == .auto ? UpscaleModelChoice.generalPhoto.modelName : provider.modelChoice.modelName
+        return UpscaleEstimator.plan(
+            sourceWidth: cg.width, sourceHeight: cg.height, scale: provider.scaleFactor.rawValue,
+            overlap: overlap, model: provider.modelChoice.isBundled || provider.modelChoice == .auto ? model : nil,
+            power: provider.power
+        )
+    }
+
+    // MARK: - Upscale
+
+    /// Upscales the *current* image (the latest edit if there is one, else
+    /// the original) so tools chain the same way everywhere.
     func upscale() {
-        guard let sourceImage, !isUpscaling else { return }
+        guard let input = resultImage ?? sourceImage, !isBusy else { return }
         isUpscaling = true
         progress = 0
         errorMessage = nil
+        startSession()
 
-        Task {
-            // Resolve once and capture as a local `let` so this run always
-            // finishes with the upscaler it started with, even if the
-            // model/quality selection changes in Settings mid-flight.
-            let upscaler = await provider.resolveCurrent(for: sourceImage)
+        let session = self.session
+        let backgroundTask = Self.beginBackgroundWork()
+        runTask = Task {
+            let startedAt = Date()
+            // Resolve once so this run finishes with the upscaler it
+            // started with, even if settings change mid-flight.
+            let upscaler = await provider.resolveCurrent(for: input)
             let outcome = await UpscaleRunner.run(
-                sourceImage, using: upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
+                input, using: upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
                 denoiseAmount: provider.denoiseBeforeUpscale ? 0.5 : 0,
                 antiAliasingAmount: provider.antiAliasingAmount,
                 sharpenAmount: provider.sharpenAmount,
                 blendAmount: provider.upscaleStrength,
-                detailLevel: provider.detail.rawValue,
-                requestedScale: provider.scaleFactor.rawValue
+                detailLevel: "full_res:\(provider.power.rawValue)",
+                requestedScale: provider.scaleFactor.rawValue,
+                session: session
             ) { [weak self] value in
                 Task { @MainActor in self?.progress = value }
             }
             if let result = outcome.result {
+                let seconds = Date().timeIntervalSince(startedAt)
+                UpscaleEstimator.record(model: upscaler.techniqueInfo.modelName, power: provider.power, tiles: result.tileCount, seconds: seconds)
+                lastRunSummary = UpscaleRunSummary(
+                    modelName: upscaler.techniqueInfo.modelName.flatMap { name in
+                        UpscaleModelChoice.allCases.first { $0.modelName == name }?.displayName
+                    } ?? "Lanczos",
+                    seconds: seconds, tiles: result.tileCount,
+                    outputSize: CGSize(width: result.image.cgImage?.width ?? 0, height: result.image.cgImage?.height ?? 0),
+                    outputWasCapped: result.outputWasCapped
+                )
                 skipNextAutoCloudBackup = true
                 self.resultImage = result.image
                 Haptics.success()
@@ -155,69 +337,123 @@ final class UpscalerViewModel: ObservableObject {
                     saveResultToPhotos()
                 }
             } else if let error = outcome.error {
-                self.errorMessage = error.localizedDescription
-                Haptics.error()
+                handleRunError(error)
             }
             self.isUpscaling = false
+            self.finishSession()
+            Self.endBackgroundWork(backgroundTask)
         }
     }
 
-    /// Clears the current result so `resultImage ?? sourceImage` (what
-    /// every tab chains onto) falls back to the untouched original photo —
-    /// a single-tap way to back out of a chain of edits without re-picking
-    /// the photo from scratch. `sourceImage` itself is never touched, so
-    /// re-upscaling/re-editing after a revert still starts from the same
-    /// original.
+    private func startSession() {
+        isPaused = false
+        runStartedAt = Date()
+        liveFrame = nil
+        session = UpscaleSession(power: provider.power) { [weak self] frame in
+            Task { @MainActor in
+                guard let self, self.runStartedAt != nil else { return }
+                self.liveFrame = frame
+            }
+        }
+    }
+
+    private func finishSession() {
+        session = nil
+        runTask = nil
+        liveFrame = nil
+        runStartedAt = nil
+        isPaused = false
+    }
+
+    private func handleRunError(_ error: Error) {
+        if error is CancellationError {
+            Haptics.lightImpact()
+        } else {
+            errorMessage = error.localizedDescription
+            Haptics.error()
+        }
+    }
+
+    /// Parks the tile loop between batches — the phone cools and the
+    /// battery rests, and nothing already processed is lost.
+    func togglePause() {
+        guard let session else { return }
+        isPaused.toggle()
+        session.setPaused(isPaused)
+        Haptics.lightImpact()
+        ActionLoggingService.log(isPaused ? "upscale_pause" : "upscale_resume", outcome: "success")
+    }
+
+    func cancelRun() {
+        session?.setPaused(false)
+        runTask?.cancel()
+        ActionLoggingService.log("upscale_cancel", outcome: "success")
+    }
+
+    /// Lets a run in progress keep going for the short grace period iOS
+    /// gives a backgrounded app, instead of being frozen mid-tile the
+    /// instant the user switches away.
+    private static func beginBackgroundWork() -> UIBackgroundTaskIdentifier {
+        var identifier: UIBackgroundTaskIdentifier = .invalid
+        identifier = UIApplication.shared.beginBackgroundTask(withName: "Upscale") {
+            UIApplication.shared.endBackgroundTask(identifier)
+            identifier = .invalid
+        }
+        return identifier
+    }
+
+    private static func endBackgroundWork(_ identifier: UIBackgroundTaskIdentifier) {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+    }
+
+    /// Clears the current result so `resultImage ?? sourceImage` falls
+    /// back to the untouched original — itself undoable.
     func revertToOriginal() {
         guard resultImage != nil else { return }
         resultImage = nil
         Haptics.lightImpact()
     }
 
-    /// Runs the *entire* current photo through every bundled real model in
-    /// turn — not a quick test crop — and collects every result so the
-    /// user can look at each full image and pick the one they like,
-    /// instead of a heuristic silently choosing one for them. Each run
-    /// goes through `UpscaleRunner` exactly like a normal single upscale,
-    /// so every attempt (whichever ends up chosen or not) still shows up
-    /// in History the same way.
+    /// Runs the *entire* current photo through every bundled model in turn
+    /// and collects every result so the user can pick by eye.
     func compareModels() {
-        guard let sourceImage, !isComparing, provider.quality.overlap(customOverlap: provider.customOverlap) != nil else { return }
+        guard let input = resultImage ?? sourceImage, !isBusy, provider.quality.overlap(customOverlap: provider.customOverlap) != nil else { return }
         isComparing = true
         comparisonProgress = 0
         comparisonResults = []
         errorMessage = nil
+        startSession()
+        let session = self.session
+        let backgroundTask = Self.beginBackgroundWork()
 
-        Task {
+        runTask = Task {
+            defer {
+                isComparing = false
+                finishSession()
+                Self.endBackgroundWork(backgroundTask)
+            }
             let candidates = await provider.resolveAllBundled()
             guard !candidates.isEmpty else {
                 errorMessage = "No bundled models available to compare."
-                isComparing = false
                 Haptics.error()
                 return
             }
 
             var results: [ModelComparisonResult] = []
             for (index, candidate) in candidates.enumerated() {
-                // "Auto use of tools" — Compare Models is Auto mode's real
-                // interactive behavior (see ContentView's isCompareMode),
-                // so the render-tuned candidates get the same auto prep
-                // Batch's silent auto-pick does for them (see
-                // BatchUpscaleViewModel.runAll): denoised with the
-                // render-specific model *before* being upscaled, not left
-                // for the SR model to amplify whatever noise a render
-                // brought with it. Scoped to just these two candidates —
-                // running every model through an extra denoise pass first
-                // would make the sharpness-driven comparison itself less
-                // apples-to-apples for the other four, which were never
-                // tuned assuming a pre-denoised input.
+                if Task.isCancelled { break }
+                // The render-tuned candidates expect pre-cleaned input, so
+                // they get the render denoise pass first (as Batch's auto
+                // pick does); the others run on the photo as-is.
                 let autoRenderDenoise = candidate.choice == .render3D || candidate.choice == .stylizedRender
                 let outcome = await UpscaleRunner.run(
-                    sourceImage, using: candidate.upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
+                    input, using: candidate.upscaler, sourceFileSizeBytes: sourceFileSizeBytes,
                     antiAliasingAmount: provider.antiAliasingAmount,
                     autoRenderDenoise: autoRenderDenoise,
-                    detailLevel: provider.detail.rawValue,
-                    requestedScale: provider.scaleFactor.rawValue
+                    detailLevel: "full_res:\(provider.power.rawValue)",
+                    requestedScale: provider.scaleFactor.rawValue,
+                    session: session
                 ) { [weak self] tileProgress in
                     Task { @MainActor in
                         self?.comparisonProgress = (Double(index) + tileProgress) / Double(candidates.count)
@@ -228,12 +464,15 @@ final class UpscalerViewModel: ObservableObject {
                         choice: candidate.choice, image: result.image,
                         sharpnessScore: UpscalerProvider.sharpnessScore(result.image)
                     ))
+                } else if outcome.error is CancellationError {
+                    break
                 }
             }
 
             comparisonResults = results
-            isComparing = false
-            if results.isEmpty {
+            if Task.isCancelled {
+                Haptics.lightImpact()
+            } else if results.isEmpty {
                 errorMessage = "Every model failed to produce a result."
                 Haptics.error()
             } else {
@@ -248,9 +487,6 @@ final class UpscalerViewModel: ObservableObject {
 
     /// Called when the user taps "Use This" on one of `comparisonResults`.
     func pickComparisonResult(_ result: ModelComparisonResult) {
-        // Every candidate already went through UpscaleRunner.log during
-        // compareModels() (uploaded already if the setting's on) — skip so
-        // picking one here doesn't upload it a second time.
         skipNextAutoCloudBackup = true
         resultImage = result.image
         comparisonResults = []

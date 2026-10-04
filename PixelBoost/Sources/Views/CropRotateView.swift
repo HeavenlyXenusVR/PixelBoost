@@ -73,14 +73,8 @@ struct CropRotateView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Crop & Rotate")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Crop & Rotate")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -207,7 +201,7 @@ struct CropRotateView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "crop", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .crop)
     }
 }
 

@@ -29,9 +29,9 @@ struct ModelPickerView: View {
                     }
 
                     PBFootnote(
-                        text: "Auto and the two starred models above are real, on-device Core ML "
-                            + "models. The rest are on the roadmap — picking one today falls back "
-                            + "to plain resampling, same as any missing model always has."
+                        text: "Every bundled model runs on-device and processes every pixel of your "
+                            + "photo at full resolution. Models marked Not Bundled are on the roadmap — "
+                            + "picking one today falls back to plain resampling."
                     )
                     .padding(.top, 6)
                 }
@@ -85,7 +85,6 @@ private struct ModelCard: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(isSelected ? PBColor.accent : .clear, lineWidth: 1.5)
             )
-            .shadow(color: isSelected ? PBColor.accent.opacity(0.3) : .clear, radius: 10, x: 0, y: 0)
             .opacity(choice == .auto || choice.isBundled ? 1 : 0.55)
         }
         .buttonStyle(.plain)
@@ -122,20 +121,7 @@ private struct ModelCard: View {
             )
     }
 
-    private var systemImage: String {
-        switch choice {
-        case .auto: return "sparkles"
-        case .generalPhoto: return "photo"
-        case .anime: return "paintpalette"
-        case .portrait: return "person.crop.square"
-        case .lowLight: return "hare"
-        case .render3D: return "cube"
-        case .stylizedRender: return "paintbrush"
-        case .sharp2x: return "arrow.up.right.and.arrow.down.left.rectangle"
-        case .animeVideo: return "film"
-        case .textDocument: return "doc.text"
-        }
-    }
+    private var systemImage: String { choice.symbolName }
 
     private var subtitle: String {
         switch choice {
@@ -151,6 +137,24 @@ private struct ModelCard: View {
         case .textDocument: return "Crisp edges on type"
         }
     }
+}
+
+extension UpscaleModelChoice {
+    var symbolName: String {
+        switch self {
+        case .auto: return "sparkles"
+        case .generalPhoto: return "photo"
+        case .anime: return "paintpalette"
+        case .portrait: return "person.crop.square"
+        case .lowLight: return "hare"
+        case .render3D: return "cube"
+        case .stylizedRender: return "paintbrush"
+        case .sharp2x: return "arrow.up.right.and.arrow.down.left.rectangle"
+        case .animeVideo: return "film"
+        case .textDocument: return "doc.text"
+        }
+    }
+
 }
 
 #Preview {

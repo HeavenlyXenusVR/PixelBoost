@@ -123,14 +123,8 @@ struct InpaintView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Erase")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Erase")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -197,7 +191,7 @@ struct InpaintView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "eraser", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .erase)
     }
 }
 

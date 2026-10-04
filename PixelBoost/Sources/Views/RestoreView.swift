@@ -78,16 +78,10 @@ struct RestoreView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Restore")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .pbScreen("Restore")
             .onChange(of: denoiseAmount) { _, _ in updatePreview() }
             .onChange(of: faceRestoreEnabled) { _, _ in updatePreview() }
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -105,7 +99,7 @@ struct RestoreView: View {
         }
         guard current !== lastBase else { return }
         lastBase = current
-        let preview = Self.downscaled(current, maxDimension: 800)
+        let preview = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 800)
         previewSource = preview
         previewImage = preview
         resetControls()
@@ -173,7 +167,7 @@ struct RestoreView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "bandage", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .restore)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

@@ -42,12 +42,7 @@ struct HistoryView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .pbReserveTabBarSpace()
-        .background(PBColor.background.ignoresSafeArea())
-        .navigationTitle("History")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(PBColor.background, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .pbScreen("History", tool: false)
         .task { await load() }
         .refreshable { await load() }
         .toolbar {

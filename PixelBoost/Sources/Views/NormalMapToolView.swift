@@ -42,14 +42,8 @@ struct NormalMapToolView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Normal Map")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Normal Map")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -74,7 +68,7 @@ struct NormalMapToolView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "arrow.up.arrow.down.square", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .normalMap)
     }
 }
 

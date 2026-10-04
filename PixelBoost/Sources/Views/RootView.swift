@@ -1,80 +1,77 @@
+import PhotosUI
 import SwiftUI
 
-/// App root: every tab's content stays mounted the whole time (toggled
-/// with opacity/hit-testing, never removed from the tree) so switching
-/// tabs never loses in-progress state — crop selection, paint strokes,
-/// slider positions, whatever a tab was in the middle of. That's the
-/// tradeoff for a custom scrollable bar instead of a native `TabView`
-/// (which would do this for free, but only for ~5 tabs before collapsing
-/// the rest into "More" — not workable for a dozen tabs).
+/// App root.
+///
+/// **State is preserved, work isn't wasted.** A tab is only built the
+/// first time it's visited, then stays mounted (hidden with opacity) so
+/// switching away and back never loses a crop selection, paint strokes or
+/// slider positions. Previously all 24 screens were built at launch and
+/// every one of them re-processed the photo whenever it changed — about
+/// twenty full-image downscales on the main thread per edit, for screens
+/// nobody was looking at. Now hidden tabs also learn they're hidden
+/// (`pbIsActiveTab`) and defer their refresh until they're shown again.
 struct RootView: View {
     @EnvironmentObject private var provider: UpscalerProvider
     @EnvironmentObject private var viewModel: UpscalerViewModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .home
-    @State private var showingToolsDrawer = false
+    @State private var visitedTabs: Set<AppTab> = [.home]
+    /// The last tool used, so the dock's Tools button returns to it.
+    @State private var lastTool: AppTab?
 
     var body: some View {
         ZStack {
             ForEach(AppTab.allCases) { tab in
-                tabContent(tab)
-                    .opacity(selectedTab == tab ? 1 : 0)
-                    .allowsHitTesting(selectedTab == tab)
-                    .zIndex(selectedTab == tab ? 1 : 0)
+                if visitedTabs.contains(tab) {
+                    tabContent(tab)
+                        .environment(\.pbIsActiveTab, selectedTab == tab)
+                        .environment(\.pbShowTools, { select(.tools) })
+                        .opacity(selectedTab == tab ? 1 : 0)
+                        .allowsHitTesting(selectedTab == tab)
+                        .accessibilityHidden(selectedTab != tab)
+                        .zIndex(selectedTab == tab ? 1 : 0)
+                }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            bottomBar
+        .overlay(alignment: .bottom) {
+            dock
         }
-        // Every tab stays mounted (see the ZStack above), so there's no
-        // per-screen .onAppear to hang this off — the selection change
-        // itself is the navigation event.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .onChange(of: selectedTab) { previous, tab in
             ActionLoggingService.log("tab_change", detail: [
                 "from": previous.rawValue, "to": tab.rawValue,
-                "via": showingToolsDrawer ? "drawer" : "tab_bar",
             ])
         }
         .preferredColorScheme(.dark)
         .onAppear {
-            // Applied once, at launch, before any tab switching — a
-            // shared photo waiting in the App Group container (checked
-            // right after) always wins and jumps to Home regardless, same
-            // as it already did before this setting existed.
-            selectedTab = provider.defaultTab
+            select(provider.defaultTab)
             consumeSharedPhotoIfNeeded()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active { consumeSharedPhotoIfNeeded() }
         }
-        .sheet(isPresented: $showingToolsDrawer) {
-            ToolsDrawerView(selectedTab: selectedTab) { tab in
-                Haptics.lightImpact()
-                selectedTab = tab
-                showingToolsDrawer = false
-            }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-            .preferredColorScheme(.dark)
-        }
     }
 
-    /// The Share Extension runs in a separate process and can only drop a
-    /// photo into a shared App Group container (see `SharedPhotoBridge`) —
-    /// this is the main app's side of that hand-off, checked on launch and
-    /// every time the app comes back to the foreground (covers both "share
-    /// into PixelBoost while it's not running" and "share while it's
-    /// already open in the background").
+    private func select(_ tab: AppTab) {
+        visitedTabs.insert(tab)
+        if tab.isTool { lastTool = tab }
+        selectedTab = tab
+    }
+
+    /// The Share Extension drops a photo into the App Group container (see
+    /// `SharedPhotoBridge`); pick it up on launch and on every foreground.
     private func consumeSharedPhotoIfNeeded() {
         guard let image = SharedPhotoBridge.consumePendingImage() else { return }
         viewModel.loadSharedImage(image)
-        selectedTab = .home
+        select(.home)
     }
 
     @ViewBuilder
     private func tabContent(_ tab: AppTab) -> some View {
         switch tab {
         case .home: ContentView()
+        case .tools: ToolsLibraryView(lastTool: lastTool) { select($0) }
         case .cutout: CutoutTabView()
         case .enhance: AutoEnhanceView()
         case .adjust: AdjustmentsView()
@@ -101,143 +98,227 @@ struct RootView: View {
         }
     }
 
-    /// 5 fixed primary tabs plus a center "Tools" launcher for the other
-    /// 10 (`AppTab.moreTabs`, via `showingToolsDrawer`'s sheet) — replaces
-    /// the old horizontally-scrolling 15-icon strip, which crammed every
-    /// destination into one undifferentiated row.
-    private var bottomBar: some View {
+    // MARK: - Dock
+
+    /// A floating, solid (not blurred) capsule. The Tools slot doubles as
+    /// "where am I": while a tool is open it shows that tool's icon.
+    private var dock: some View {
         HStack(spacing: 0) {
-            ForEach(AppTab.primaryTabs.prefix(2)) { tab in
-                tabButton(tab).frame(maxWidth: .infinity)
-            }
-            toolsButton.frame(maxWidth: .infinity)
-            ForEach(AppTab.primaryTabs.dropFirst(2)) { tab in
-                tabButton(tab).frame(maxWidth: .infinity)
+            ForEach(AppTab.primaryTabs) { tab in
+                dockButton(tab)
             }
         }
-        .padding(.horizontal, 4)
-        .frame(height: PBLayout.bottomBarHeight)
-        .background(.ultraThinMaterial)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background(PBColor.surface, in: Capsule())
+        .overlay(Capsule().strokeBorder(PBColor.lineStrong, lineWidth: 1))
+        .shadow(color: .black.opacity(0.5), radius: 18, x: 0, y: 8)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 6)
         .overlay(alignment: .top) {
-            Rectangle().fill(PBColor.line).frame(height: 1)
+            if viewModel.isUpscaling || viewModel.isComparing, selectedTab != .home {
+                runningPill
+                    .offset(y: -34)
+            }
         }
     }
 
-    private func tabButton(_ tab: AppTab) -> some View {
-        let isSelected = selectedTab == tab
+    private func dockButton(_ tab: AppTab) -> some View {
+        let isSelected = selectedTab == tab || (tab == .tools && selectedTab.isTool)
+        let icon = tab == .tools && selectedTab.isTool ? selectedTab.systemImage : tab.systemImage
+        let title = tab == .tools && selectedTab.isTool ? selectedTab.title : tab.title
         return Button {
             Haptics.lightImpact()
-            selectedTab = tab
+            if tab == .tools, selectedTab == .tools, let lastTool {
+                select(lastTool)
+            } else {
+                select(tab)
+            }
         } label: {
             VStack(spacing: 3) {
-                Image(systemName: tab.systemImage)
+                Image(systemName: icon)
                     .font(.system(size: 17, weight: .semibold))
-                Text(tab.title)
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .frame(height: 20)
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
                     .lineLimit(1)
-                Capsule()
-                    .fill(isSelected ? PBColor.accent : .clear)
-                    .frame(width: 14, height: 3)
+                    .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(isSelected ? PBColor.accent : PBColor.inkDim)
-            .padding(.vertical, 6)
-            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isSelected)
+            .foregroundStyle(isSelected ? PBColor.ink : PBColor.inkFaint)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(isSelected ? PBColor.surface3 : Color.clear, in: Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    /// Distinct raised-circle treatment so the launcher for the other 10
-    /// tabs reads as its own thing, not a 6th identical icon — and lights
-    /// up in accent when the currently active tab lives behind it, so
-    /// there's still a sense of "where am I" even though that tab isn't
-    /// individually represented in the bar.
-    private var toolsButton: some View {
-        let isMoreTabActive = !selectedTab.isPrimary
-        return Button {
-            Haptics.lightImpact()
-            showingToolsDrawer = true
+    /// Visible from any other screen while an upscale runs: progress at a
+    /// glance and one tap back to the live view.
+    private var runningPill: some View {
+        Button {
+            select(.home)
         } label: {
-            VStack(spacing: 2) {
-                ZStack {
-                    Circle()
-                        .fill(isMoreTabActive ? AnyShapeStyle(PBColor.accentGradient) : AnyShapeStyle(PBColor.surface2))
-                        .frame(width: 42, height: 42)
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-                        .shadow(color: isMoreTabActive ? PBColor.accent.opacity(0.5) : .clear, radius: 10, x: 0, y: 4)
-                    Image(systemName: "square.grid.2x2.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(isMoreTabActive ? .white : PBColor.inkDim)
-                }
-                .offset(y: -8)
-                Text(isMoreTabActive ? selectedTab.title : "Tools")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(isMoreTabActive ? PBColor.accent : PBColor.inkDim)
-                    .lineLimit(1)
-                    .offset(y: -4)
+            HStack(spacing: 8) {
+                ProgressView(value: viewModel.isComparing ? viewModel.comparisonProgress : viewModel.progress)
+                    .progressViewStyle(.circular)
+                    .tint(PBColor.accent)
+                    .scaleEffect(0.7)
+                Text(viewModel.isPaused ? "Paused" : "Upscaling \(Int((viewModel.isComparing ? viewModel.comparisonProgress : viewModel.progress) * 100))%")
+                    .pbFont(.monoSmall)
+                    .foregroundStyle(PBColor.ink)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(PBColor.surface2, in: Capsule())
+            .overlay(Capsule().strokeBorder(PBColor.lineStrong, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
 }
 
-/// The "Tools" drawer sheet — a grid of every non-primary tab
-/// (`AppTab.moreTabs`), grouped into two labeled sections for scannability
-/// now that it's 10 items, tap to select and dismiss.
-private struct ToolsDrawerView: View {
-    let selectedTab: AppTab
+/// The Tools library: the current photo at the top, then every editing
+/// tool as a described tile, grouped by what it's for, with search.
+private struct ToolsLibraryView: View {
+    let lastTool: AppTab?
     let onSelect: (AppTab) -> Void
+    @EnvironmentObject private var viewModel: UpscalerViewModel
+    @State private var query = ""
+    @State private var pickerItem: PhotosPickerItem?
 
-    private static let editTools: [AppTab] = [.cutout, .enhance, .selective, .crop, .frames, .pixelArt, .scripted, .overlays, .erase, .restore, .renderDenoise, .normalMap, .seamlessTexture, .depthFog, .aoBlend, .lut, .clone]
-    private static let libraryTools: [AppTab] = [.cloud, .history]
-
-    private let columns = [GridItem(.adaptive(minimum: 84), spacing: 14)]
+    private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    section(title: "Edit Tools", tabs: Self.editTools)
-                    section(title: "Library", tabs: Self.libraryTools)
+                VStack(alignment: .leading, spacing: 18) {
+                    photoHeader
+                    if query.isEmpty, let lastTool {
+                        VStack(alignment: .leading, spacing: 8) {
+                            PBSectionLabel(title: "Continue")
+                            toolTile(lastTool, wide: true)
+                        }
+                    }
+                    ForEach(AppTab.Category.allCases) { category in
+                        let tabs = category.tabs.filter(matches)
+                        if !tabs.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                PBSectionLabel(title: category.rawValue)
+                                LazyVGrid(columns: columns, spacing: 10) {
+                                    ForEach(tabs) { toolTile($0, wide: false) }
+                                }
+                            }
+                        }
+                    }
                 }
-                .padding(20)
+                .padding(PBLayout.gutter)
             }
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Tools")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Find a tool")
+            .pbScreen("Tools", tool: false)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    PBUndoRedoButtons()
+                }
+            }
+            .task(id: pickerItem) {
+                guard let pickerItem else { return }
+                await viewModel.load(from: pickerItem)
+            }
         }
     }
 
-    private func section(title: String, tabs: [AppTab]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            PBSectionLabel(title: title)
-            LazyVGrid(columns: columns, spacing: 16) {
-                ForEach(tabs) { tab in
-                    toolCell(tab)
-                }
-            }
-        }
+    private func matches(_ tab: AppTab) -> Bool {
+        query.isEmpty
+            || tab.title.localizedCaseInsensitiveContains(query)
+            || tab.blurb.localizedCaseInsensitiveContains(query)
     }
 
-    private func toolCell(_ tab: AppTab) -> some View {
-        let isSelected = tab == selectedTab
-        return Button { onSelect(tab) } label: {
-            VStack(spacing: 10) {
+    /// What every tool will work on, so it's never a surprise.
+    @ViewBuilder
+    private var photoHeader: some View {
+        HStack(spacing: 14) {
+            Group {
+                if let image = viewModel.displayResult ?? viewModel.displaySource {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "photo")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(PBColor.inkFaint)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(PBColor.surface2)
+                }
+            }
+            .frame(width: 64, height: 64)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(PBColor.line, lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 4) {
+                if let cg = (viewModel.resultImage ?? viewModel.sourceImage)?.cgImage {
+                    Text(viewModel.resultImage == nil ? "Original photo" : "Edited photo")
+                        .pbFont(.headline)
+                        .foregroundStyle(PBColor.ink)
+                    Text("\(cg.width)×\(cg.height) · \(String(format: "%.1f", Double(cg.width * cg.height) / 1_000_000)) MP")
+                        .pbFont(.monoSmall)
+                        .foregroundStyle(PBColor.inkDim)
+                } else {
+                    Text("No photo yet")
+                        .pbFont(.headline)
+                        .foregroundStyle(PBColor.ink)
+                    Text("Tools edit one shared photo.")
+                        .pbFont(.caption)
+                        .foregroundStyle(PBColor.inkDim)
+                }
+            }
+            Spacer()
+            PhotosPicker(selection: $pickerItem, matching: .images, photoLibrary: .shared()) {
+                Image(systemName: "photo.badge.plus")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(PBColor.ink)
+                    .frame(width: 40, height: 40)
+                    .background(PBColor.surface2, in: Circle())
+            }
+            .accessibilityLabel("Choose Photo")
+        }
+        .padding(12)
+        .pbGlassSurface(cornerRadius: 20)
+    }
+
+    private func toolTile(_ tab: AppTab, wide: Bool) -> some View {
+        Button {
+            Haptics.lightImpact()
+            onSelect(tab)
+        } label: {
+            HStack(alignment: wide ? .center : .top, spacing: 10) {
                 Image(systemName: tab.systemImage)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(isSelected ? PBColor.accent : PBColor.ink)
-                    .frame(width: 56, height: 56)
-                    .pbGlassSurface(cornerRadius: 18)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(isSelected ? PBColor.accent : .clear, lineWidth: 1.5)
-                    )
-                Text(tab.title)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(PBColor.inkDim)
-                    .lineLimit(1)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(PBColor.accent)
+                    .frame(width: 34, height: 34)
+                    .background(PBColor.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(tab.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(PBColor.ink)
+                        .lineLimit(1)
+                    Text(tab.blurb)
+                        .pbFont(.caption)
+                        .foregroundStyle(PBColor.inkDim)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                if wide {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(PBColor.inkFaint)
+                }
             }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: wide ? 0 : 92, alignment: .topLeading)
+            .pbGlassSurface(cornerRadius: 16)
         }
         .buttonStyle(.plain)
     }

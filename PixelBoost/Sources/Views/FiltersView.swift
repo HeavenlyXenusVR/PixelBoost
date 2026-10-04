@@ -53,14 +53,8 @@ struct FiltersView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Filters")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Filters")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -115,12 +109,12 @@ struct FiltersView: View {
         }
         guard current !== lastBase else { return }
         lastBase = current
-        let preview = Self.downscaled(current, maxDimension: 800)
+        let preview = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 800)
         previewSource = preview
         previewImage = preview
         selectedFilter = .none
 
-        let thumbSource = Self.downscaled(current, maxDimension: 160)
+        let thumbSource = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 160)
         thumbnailSource = thumbSource
         Task { await buildThumbnails(from: thumbSource) }
     }
@@ -147,7 +141,7 @@ struct FiltersView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "camera.filters", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .filters)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

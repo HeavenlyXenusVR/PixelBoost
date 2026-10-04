@@ -131,15 +131,9 @@ struct SelectiveAdjustView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Selective")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .pbScreen("Selective")
             .onChange(of: adjustments) { _, _ in updatePreview() }
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -161,7 +155,7 @@ struct SelectiveAdjustView: View {
         guard current !== lastBase else { return }
         lastBase = current
         baseImage = current
-        previewSource = Self.downscaled(current, maxDimension: 800)
+        previewSource = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 800)
         previewImage = nil
         strokes = []
         adjustments = .identity
@@ -225,7 +219,7 @@ struct SelectiveAdjustView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "paintbrush.pointed", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .selective)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

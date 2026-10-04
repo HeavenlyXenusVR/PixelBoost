@@ -70,18 +70,12 @@ struct AdjustmentsView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Adjust")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .pbScreen("Adjust")
             .onChange(of: adjustments) { _, newValue in
                 guard let previewSource else { return }
                 previewImage = newValue.apply(to: previewSource)
             }
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -99,7 +93,7 @@ struct AdjustmentsView: View {
         }
         guard current !== lastBase else { return }
         lastBase = current
-        let preview = Self.downscaled(current, maxDimension: 800)
+        let preview = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 800)
         previewSource = preview
         previewImage = preview
         adjustments = .identity
@@ -125,7 +119,7 @@ struct AdjustmentsView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "slider.horizontal.3", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .adjust)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

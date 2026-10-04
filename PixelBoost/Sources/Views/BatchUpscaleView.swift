@@ -80,12 +80,7 @@ struct BatchUpscaleView: View {
             }
             .padding(16)
         }
-        .pbReserveTabBarSpace()
-        .background(PBColor.background.ignoresSafeArea())
-        .navigationTitle("Batch Upscale")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(PBColor.background, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .pbScreen("Batch Upscale", tool: false)
         .fileImporter(
             isPresented: $isPresentingEXRImporter,
             allowedContentTypes: [UTType(filenameExtension: "exr") ?? .data],

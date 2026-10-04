@@ -23,7 +23,7 @@ struct PixelBoostApp: App {
         TelemetryService.record("session_start", detail: [
             "model_choice": provider.modelChoice.rawValue,
             "quality": provider.quality.rawValue,
-            "detail": provider.detail.rawValue,
+            "power": provider.power.rawValue,
             "scale": provider.scaleFactor.rawValue,
             "temporary_cloud_save": provider.temporaryCloudSaveEnabled,
         ])

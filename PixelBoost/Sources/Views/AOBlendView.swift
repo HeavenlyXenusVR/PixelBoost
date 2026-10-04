@@ -75,12 +75,7 @@ struct AOBlendView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("AO Blend")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .pbScreen("AO Blend")
             .fileImporter(
                 isPresented: $isPresentingAOImporter,
                 allowedContentTypes: [UTType(filenameExtension: "exr") ?? .data]
@@ -91,8 +86,7 @@ struct AOBlendView: View {
                 }
             }
             .onChange(of: intensity) { _, _ in updatePreview() }
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -162,7 +156,7 @@ struct AOBlendView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "cube", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .aoBlend)
     }
 }
 

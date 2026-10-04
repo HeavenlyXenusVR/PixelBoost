@@ -1,4 +1,5 @@
 import CoreImage
+import CoreML
 import Foundation
 import UIKit
 
@@ -151,45 +152,6 @@ enum UpscaleQuality: String, CaseIterable, Identifiable {
     }
 }
 
-/// How much of the source photo's real resolution the model gets to see —
-/// the speed/heat vs. detail dial. Output size is set separately by
-/// `UpscaleFactor`; this only decides how many source pixels are actually
-/// run through the model to fill it. A 12MP phone photo keeps full
-/// resolution at `.maximum`, is lightly downscaled at `.high`, and more so
-/// at `.balanced` — every level still sees far more than the ~1MP the
-/// v3.26.13–v3.26.17 pipeline was feeding it.
-enum UpscaleDetail: String, CaseIterable, Identifiable {
-    case balanced
-    case high
-    case maximum
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .balanced: return "Balanced"
-        case .high: return "High"
-        case .maximum: return "Maximum"
-        }
-    }
-
-    var maxModelInputPixels: Double {
-        switch self {
-        case .balanced: return 4_000_000
-        case .high: return 8_000_000
-        case .maximum: return 16_000_000
-        }
-    }
-
-    var footnote: String {
-        switch self {
-        case .balanced: return "Model sees up to 4 MP of the photo. Fastest, coolest."
-        case .high: return "Model sees up to 8 MP. Sharper; about twice as long as Balanced."
-        case .maximum: return "Model sees up to 16 MP: full resolution for most phone photos. Sharpest, slowest, and the phone will get warm."
-        }
-    }
-}
-
 /// Final output size, as a multiple of the source photo's own dimensions.
 /// Independent of which model runs — see `ScaledOutputUpscaler` for how a
 /// model fixed at a 4x native scale still delivers 2x/3x output.
@@ -241,7 +203,7 @@ final class UpscalerProvider: ObservableObject {
     private static let customOverlapDefaultsKey = "com.pixelboost.customOverlap"
     private static let upscaleStrengthDefaultsKey = "com.pixelboost.upscaleStrength"
     private static let scaleFactorDefaultsKey = "com.pixelboost.scaleFactor"
-    private static let detailDefaultsKey = "com.pixelboost.detail"
+    private static let powerDefaultsKey = "com.pixelboost.power"
     private static let exportFormatDefaultsKey = "com.pixelboost.exportFormat"
     private static let exportQualityDefaultsKey = "com.pixelboost.exportQuality"
     private static let denoiseBeforeUpscaleDefaultsKey = "com.pixelboost.denoiseBeforeUpscale"
@@ -314,8 +276,11 @@ final class UpscalerProvider: ObservableObject {
     @Published var scaleFactor: UpscaleFactor {
         didSet { UserDefaults.standard.set(scaleFactor.rawValue, forKey: Self.scaleFactorDefaultsKey); Self.logChange("scale_factor", scaleFactor.rawValue) }
     }
-    @Published var detail: UpscaleDetail {
-        didSet { UserDefaults.standard.set(detail.rawValue, forKey: Self.detailDefaultsKey); Self.logChange("detail", detail.rawValue) }
+    /// Where and how hard upscales run — see `UpscalePower`. Replaced the
+    /// old Detail setting, which shrank the photo before the model saw it;
+    /// every upscale is full resolution now, pixel by pixel.
+    @Published var power: UpscalePower {
+        didSet { UserDefaults.standard.set(power.rawValue, forKey: Self.powerDefaultsKey); Self.logChange("power", power.rawValue) }
     }
     @Published var exportFormat: ExportFormat {
         didSet { UserDefaults.standard.set(exportFormat.rawValue, forKey: Self.exportFormatDefaultsKey); Self.logChange("export_format", exportFormat.rawValue) }
@@ -481,8 +446,8 @@ final class UpscalerProvider: ObservableObject {
         upscaleStrength = storedUpscaleStrength ?? 1.0
         let storedScale = UserDefaults.standard.object(forKey: Self.scaleFactorDefaultsKey) as? Int
         scaleFactor = storedScale.flatMap(UpscaleFactor.init(rawValue:)) ?? .x4
-        detail = UserDefaults.standard.string(forKey: Self.detailDefaultsKey)
-            .flatMap(UpscaleDetail.init(rawValue:)) ?? .balanced
+        power = UserDefaults.standard.string(forKey: Self.powerDefaultsKey)
+            .flatMap(UpscalePower.init(rawValue:)) ?? .balanced
         temporaryCloudSaveEnabled = Self.storedTemporaryCloudSaveEnabled
         temporaryCloudTTLHours = Self.storedTemporaryCloudTTLHours
         diagnosticsEnabled = UserDefaults.standard.object(forKey: TelemetryService.diagnosticsEnabledDefaultsKey) as? Bool ?? true
@@ -537,7 +502,7 @@ final class UpscalerProvider: ObservableObject {
         guard let base = await resolvedModel(for: choice, overlap: overlap) else {
             return LanczosUpscaler(scaleFactor: Double(scaleFactor.rawValue))
         }
-        return ScaledOutputUpscaler(base: base, targetScale: scaleFactor.rawValue, maxModelInputPixels: detail.maxModelInputPixels)
+        return ScaledOutputUpscaler(base: base, targetScale: scaleFactor.rawValue)
     }
 
     /// Resolves every *actually bundled* real model at once, each wrapped
@@ -548,15 +513,10 @@ final class UpscalerProvider: ObservableObject {
     func resolveAllBundled() async -> [(choice: UpscaleModelChoice, upscaler: ImageUpscaling)] {
         guard let overlap = quality.overlap(customOverlap: customOverlap) else { return [] }
         let candidates = UpscaleModelChoice.allCases.filter { $0 != .auto && $0.isBundled }
-        // Every bundled model runs over the whole photo here, so cap the
-        // per-model cost at Balanced — Maximum across six models would be
-        // several minutes of sustained load for one comparison.
-        let compareInputPixels = min(detail.maxModelInputPixels, UpscaleDetail.balanced.maxModelInputPixels)
-
         var resolved: [(UpscaleModelChoice, ImageUpscaling)] = []
         for candidate in candidates {
             guard let base = await resolvedModel(for: candidate, overlap: overlap) else { continue }
-            resolved.append((candidate, ScaledOutputUpscaler(base: base, targetScale: scaleFactor.rawValue, maxModelInputPixels: compareInputPixels)))
+            resolved.append((candidate, ScaledOutputUpscaler(base: base, targetScale: scaleFactor.rawValue)))
         }
         return resolved
     }
@@ -566,20 +526,26 @@ final class UpscalerProvider: ObservableObject {
     /// caller in this file that needs one concrete model goes through
     /// here so the cache stays a single source of truth.
     private func resolvedModel(for choice: UpscaleModelChoice, overlap: Int) async -> CoreMLTileUpscaler? {
-        if let cached = cache[choice.modelName] {
+        // Compute units are fixed at model load, so the power mode is part
+        // of the cache key; switching modes loads a second instance once.
+        let units = power.effective.computeUnits
+        let key = "\(choice.modelName)|\(units.rawValue)"
+        if let cached = cache[key] {
             cached.updateOverlap(overlap)
             return cached
         }
-        guard let loaded = await loadUpscaler(named: choice.modelName, overlap: overlap, nativeScale: choice.nativeScale) else { return nil }
-        cache[choice.modelName] = loaded
+        guard let loaded = await loadUpscaler(named: choice.modelName, overlap: overlap, nativeScale: choice.nativeScale, computeUnits: units) else { return nil }
+        // Only keep one compute-unit variant of each model resident.
+        cache = cache.filter { !$0.key.hasPrefix(choice.modelName + "|") }
+        cache[key] = loaded
         return loaded
     }
 
-    private func loadUpscaler(named modelName: String, overlap: Int, nativeScale: Int) async -> CoreMLTileUpscaler? {
+    private func loadUpscaler(named modelName: String, overlap: Int, nativeScale: Int, computeUnits: MLComputeUnits) async -> CoreMLTileUpscaler? {
         isLoadingModel = true
         defer { isLoadingModel = false }
 
-        let config = CoreMLTileUpscaler.Config(tileSize: 128, scaleFactor: nativeScale, overlap: overlap)
+        let config = CoreMLTileUpscaler.Config(tileSize: 128, scaleFactor: nativeScale, overlap: overlap, computeUnits: computeUnits)
         // Model failed to load (not bundled, corrupt, etc.) — the caller
         // doesn't cache a nil under this key, so a later retry (e.g. after
         // an app update that adds the model) can succeed.

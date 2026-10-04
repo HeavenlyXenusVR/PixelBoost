@@ -57,6 +57,7 @@ enum UpscaleRunner {
         detailLevel: String? = nil,
         requestedScale: Int? = nil,
         isBatch: Bool = false,
+        session: UpscaleSession? = nil,
         progress: @escaping (Double) -> Void
     ) async -> Outcome {
         let startedAt = Date()
@@ -77,20 +78,22 @@ enum UpscaleRunner {
             upscalerInput = (try? await RenderDenoiseService.denoise(upscalerInput) { _ in }) ?? upscalerInput
         }
         do {
-            var result = try await upscaler.upscale(upscalerInput, progress: progress)
+            var result = try await upscaler.upscale(upscalerInput, session: session, progress: progress)
             if blendAmount < 1.0 {
                 result = await blended(result, sourceImage: sourceImage, upscaler: upscaler, amount: blendAmount) ?? result
             }
             if antiAliasingAmount > 0 {
                 result = UpscaleResult(
                     image: ImageTransform.antiAliased(result.image, amount: antiAliasingAmount),
-                    tileCount: result.tileCount, modelInputSize: result.modelInputSize
+                    tileCount: result.tileCount, modelInputSize: result.modelInputSize,
+                    outputWasCapped: result.outputWasCapped
                 )
             }
             if sharpenAmount > 0 {
                 result = UpscaleResult(
                     image: PostSharpen.apply(result.image, amount: sharpenAmount),
-                    tileCount: result.tileCount, modelInputSize: result.modelInputSize
+                    tileCount: result.tileCount, modelInputSize: result.modelInputSize,
+                    outputWasCapped: result.outputWasCapped
                 )
             }
             log(
@@ -130,7 +133,7 @@ enum UpscaleRunner {
               let fallback = try? await LanczosUpscaler(scaleFactor: scale).upscale(sourceImage, progress: { _ in }),
               let blendedImage = crossDissolve(result.image, fallback.image, amount: amount)
         else { return nil }
-        return UpscaleResult(image: blendedImage, tileCount: result.tileCount, modelInputSize: result.modelInputSize)
+        return UpscaleResult(image: blendedImage, tileCount: result.tileCount, modelInputSize: result.modelInputSize, outputWasCapped: result.outputWasCapped)
     }
 
     private static let blendContext = CIContext()

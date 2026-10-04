@@ -73,13 +73,8 @@ struct CutoutTabView: View {
                 }
                 .padding(20)
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Cutout")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in
+            .pbScreen("Cutout")
+            .pbRefresh(on: viewModel.imageVersion) {
                 selectedFill = nil
                 fillPreview = nil
                 detectionResult = nil
@@ -365,8 +360,8 @@ struct CutoutTabView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "scissors", message: "Choose a photo on the Upscale tab first.")
-            .frame(height: 220)
+        PBNoPhotoState(tab: .cutout)
+            .frame(minHeight: 420)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

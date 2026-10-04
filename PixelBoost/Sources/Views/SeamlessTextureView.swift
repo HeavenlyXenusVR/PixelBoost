@@ -58,15 +58,9 @@ struct SeamlessTextureView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Seamless Texture")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .pbScreen("Seamless Texture")
             .onChange(of: healWidth) { _, _ in updatePreview() }
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -80,7 +74,7 @@ struct SeamlessTextureView: View {
         }
         guard current !== lastBase else { return }
         lastBase = current
-        let preview = Self.downscaled(current, maxDimension: 800)
+        let preview = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 800)
         let wrapped = SeamlessTextureService.wrapOffset(preview)
         wrappedSource = wrapped
         updatePreview()
@@ -116,7 +110,7 @@ struct SeamlessTextureView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "square.grid.3x3", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .seamlessTexture)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

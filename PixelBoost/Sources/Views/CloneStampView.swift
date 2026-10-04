@@ -157,14 +157,8 @@ struct CloneStampView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Clone Stamp")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Clone Stamp")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -262,7 +256,7 @@ struct CloneStampView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "stamp", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .clone)
     }
 }
 

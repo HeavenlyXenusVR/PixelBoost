@@ -96,7 +96,7 @@ final class BatchUpscaleViewModel: ObservableObject {
             ActionLoggingService.log("batch_start", detail: [
                 "count": items.count,
                 "model_choice": provider.modelChoice.rawValue,
-                "detail": provider.detail.rawValue,
+                "power": provider.power.rawValue,
                 "scale": provider.scaleFactor.rawValue,
                 "auto_render_denoise": autoRenderDenoise,
                 "thermal_state": TelemetryService.thermalStateName,
@@ -170,9 +170,10 @@ final class BatchUpscaleViewModel: ObservableObject {
                 sharpenAmount: provider.sharpenAmount,
                 autoRenderDenoise: autoRenderDenoise,
                 blendAmount: provider.upscaleStrength,
-                detailLevel: provider.detail.rawValue,
+                detailLevel: "full_res:\(provider.power.rawValue)",
                 requestedScale: provider.scaleFactor.rawValue,
-                isBatch: true
+                isBatch: true,
+                session: UpscaleSession(power: provider.power)
             ) { _ in }
             guard let result = outcome.result else {
                 items[index].status = .failed(outcome.error?.localizedDescription ?? "Upscale failed.")

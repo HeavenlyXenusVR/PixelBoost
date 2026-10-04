@@ -71,14 +71,8 @@ struct OverlaysView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Overlays")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Overlays")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
             .sheet(isPresented: $isAddingNew) {
                 OverlayEditSheet(overlay: nil) { newOverlay in
                     var overlay = newOverlay
@@ -182,7 +176,7 @@ struct OverlaysView: View {
     ]
 
     private var emptyState: some View {
-        PBEmptyState(icon: "textformat", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .overlays)
     }
 }
 

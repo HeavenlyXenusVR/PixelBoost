@@ -18,15 +18,14 @@ import UIKit
 struct ScaledOutputUpscaler: ImageUpscaling {
     let base: CoreMLTileUpscaler
     let targetScale: Int
-    /// See `UpscaleDetail.maxModelInputPixels`.
-    let maxModelInputPixels: Double
 
     var techniqueInfo: UpscaleTechniqueInfo { base.techniqueInfo }
 
     func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UpscaleResult {
-        try await base.upscale(
-            image, outputScale: Double(targetScale),
-            maxModelInputPixels: maxModelInputPixels, progress: progress
-        )
+        try await upscale(image, session: nil, progress: progress)
+    }
+
+    func upscale(_ image: UIImage, session: UpscaleSession?, progress: @escaping (Double) -> Void) async throws -> UpscaleResult {
+        try await base.upscale(image, outputScale: Double(targetScale), session: session, progress: progress)
     }
 }

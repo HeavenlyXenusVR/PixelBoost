@@ -76,12 +76,7 @@ struct LUTToolView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("LUT")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .pbScreen("LUT")
             .fileImporter(
                 isPresented: $isPresentingLUTImporter,
                 allowedContentTypes: [UTType(filenameExtension: "cube") ?? .plainText]
@@ -92,8 +87,7 @@ struct LUTToolView: View {
                 }
             }
             .onChange(of: intensity) { _, _ in updatePreview() }
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -109,7 +103,7 @@ struct LUTToolView: View {
         }
         guard current !== lastBase else { return }
         lastBase = current
-        let preview = Self.downscaled(current, maxDimension: 800)
+        let preview = Self.downscaled(viewModel.previewBase(for: current), maxDimension: 800)
         previewSource = preview
         previewImage = preview
         lut = nil
@@ -164,7 +158,7 @@ struct LUTToolView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "square.stack.3d.up", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .lut)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

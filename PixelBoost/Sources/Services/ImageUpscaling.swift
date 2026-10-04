@@ -14,6 +14,17 @@ protocol ImageUpscaling {
     /// arbitrary background context with a value in 0...1 and may be called
     /// zero or more times before completion.
     func upscale(_ image: UIImage, progress: @escaping (Double) -> Void) async throws -> UpscaleResult
+
+    /// Same, under a run session (pause/resume, power mode, live preview
+    /// frames). Strategies with nothing to pause or preview — a single
+    /// Lanczos pass — just ignore the session.
+    func upscale(_ image: UIImage, session: UpscaleSession?, progress: @escaping (Double) -> Void) async throws -> UpscaleResult
+}
+
+extension ImageUpscaling {
+    func upscale(_ image: UIImage, session: UpscaleSession?, progress: @escaping (Double) -> Void) async throws -> UpscaleResult {
+        try await upscale(image, progress: progress)
+    }
 }
 
 /// Fixed per-strategy configuration, independent of any particular run —
@@ -37,11 +48,15 @@ struct UpscaleResult {
     /// Number of tiles the image was split into — nil for strategies that
     /// don't tile (e.g. `LanczosUpscaler`).
     let tileCount: Int?
-    /// The size the model was actually fed, after any detail-budget
-    /// downscale — not the source size and not the output size. Logged to
-    /// `upscale_history.model_input_width/height`; nil for strategies with
-    /// no model (`LanczosUpscaler`).
+    /// The size the model was actually fed. Since every upscale now runs
+    /// the full-resolution source through the model this equals the source
+    /// size; still logged to `upscale_history.model_input_width/height` so
+    /// old and new rows stay comparable. nil for `LanczosUpscaler`.
     var modelInputSize: CGSize? = nil
+    /// True when the requested output would not fit in memory and the
+    /// final canvas was made smaller than asked. The model still processed
+    /// every source pixel either way.
+    var outputWasCapped: Bool = false
 }
 
 enum UpscaleError: LocalizedError {

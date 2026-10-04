@@ -70,14 +70,8 @@ struct FramesView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Frames")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Frames")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -178,7 +172,7 @@ struct FramesView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "square.on.circle", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .frames)
     }
 }
 

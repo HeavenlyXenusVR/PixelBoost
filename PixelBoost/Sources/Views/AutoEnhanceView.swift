@@ -72,14 +72,8 @@ struct AutoEnhanceView: View {
                     emptyState
                 }
             }
-            .pbReserveTabBarSpace()
-            .background(PBColor.background.ignoresSafeArea())
-            .navigationTitle("Enhance")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(PBColor.background, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .onChange(of: viewModel.imageVersion) { _, _ in refreshFromCurrentImage() }
-            .onAppear { refreshFromCurrentImage() }
+            .pbScreen("Enhance")
+            .pbRefresh(on: viewModel.imageVersion) { refreshFromCurrentImage() }
         }
     }
 
@@ -129,7 +123,7 @@ struct AutoEnhanceView: View {
     }
 
     private var emptyState: some View {
-        PBEmptyState(icon: "wand.and.rays", message: "Choose a photo on the Upscale tab first.")
+        PBNoPhotoState(tab: .enhance)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

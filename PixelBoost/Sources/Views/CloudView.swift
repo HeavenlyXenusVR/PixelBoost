@@ -51,10 +51,7 @@ struct CloudView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .pbReserveTabBarSpace()
-        .background(PBColor.background.ignoresSafeArea())
-        .navigationTitle("Cloud Storage")
-        .navigationBarTitleDisplayMode(.inline)
+        .pbScreen("Cloud Storage", tool: false)
         .toolbar {
             if !entries.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {

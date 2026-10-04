@@ -133,6 +133,5 @@ private struct ComparisonCard: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(isSharpest ? PBColor.accent : .clear, lineWidth: 1.5)
         )
-        .shadow(color: isSharpest ? PBColor.accent.opacity(0.3) : .clear, radius: 10, x: 0, y: 0)
     }
 }
