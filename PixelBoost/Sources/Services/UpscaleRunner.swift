@@ -103,7 +103,7 @@ enum UpscaleRunner {
             if sharpenAmount > 0 {
                 result = result.replacingImage(PostSharpen.apply(result.image, amount: sharpenAmount))
             }
-            log(
+            await log(
                 upscaler: upscaler, sourceImage: sourceImage, sourceFileSizeBytes: sourceFileSizeBytes,
                 outputImage: result.image, tileCount: result.tileCount, startedAt: startedAt, error: nil,
                 modelInputSize: result.modelInputSize, result: result, settings: settings
@@ -114,7 +114,7 @@ enum UpscaleRunner {
             UpscaleSnapshot.record(resultThumbnail: result.image)
             return Outcome(result: result, error: nil)
         } catch {
-            log(
+            await log(
                 upscaler: upscaler, sourceImage: sourceImage, sourceFileSizeBytes: sourceFileSizeBytes,
                 outputImage: nil, tileCount: nil, startedAt: startedAt, error: error,
                 modelInputSize: nil, result: nil, settings: settings
@@ -192,11 +192,30 @@ enum UpscaleRunner {
         let renderDenoiseApplied: Bool?
     }
 
+    /// Holds the app awake for the short grace period iOS grants a
+    /// backgrounded app, so an upload that outlives the upscale isn't
+    /// frozen mid-request. `@MainActor` because `UIApplication` is.
+    @MainActor
+    private static func beginUploadAssertion() -> UIBackgroundTaskIdentifier {
+        var identifier: UIBackgroundTaskIdentifier = .invalid
+        identifier = UIApplication.shared.beginBackgroundTask(withName: "UpscaleUpload") {
+            UIApplication.shared.endBackgroundTask(identifier)
+            identifier = .invalid
+        }
+        return identifier
+    }
+
+    @MainActor
+    private static func endUploadAssertion(_ identifier: UIBackgroundTaskIdentifier) {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+    }
+
     private static func log(
         upscaler: ImageUpscaling, sourceImage: UIImage, sourceFileSizeBytes: Int?,
         outputImage: UIImage?, tileCount: Int?, startedAt: Date, error: Error?,
         modelInputSize: CGSize?, result: UpscaleResult?, settings: RunSettings
-    ) {
+    ) async {
         let info = upscaler.techniqueInfo
         let entry = UpscaleLogEntry(
             device_id: DeviceIdentity.current,
@@ -268,7 +287,23 @@ enum UpscaleRunner {
             .compactMap { $0 }
             .joined(separator: " · ")
         guard TelemetryService.isEnabled || temporarySaveEnabled || autoCloudBackupEnabled else { return }
-        Task.detached(priority: .background) {
+        // `UpscalerViewModel.beginBackgroundWork()` covers the upscale
+        // itself and is released the moment it finishes — which is exactly
+        // when this work starts. Without its own assertion, a result upload
+        // still in flight when the user leaves the app gets suspended and
+        // silently lost: observed in the live telemetry on 2026-10-04, where
+        // a run's 157KB source upload completed but the multi-MB result
+        // upload that followed it never arrived, and the run's buffered
+        // action events were dropped alongside it (the app was terminated
+        // rather than backgrounded — no session_background event).
+        let assertion = await beginUploadAssertion()
+        // `.utility`, not `.background`: this is racing app suspension, and
+        // `.background` is the QoS iOS defers most aggressively.
+        Task.detached(priority: .utility) {
+            // Released on every exit path below, including the early
+            // returns — an assertion left dangling is worse than none,
+            // since iOS kills the app outright when one expires unended.
+            defer { Task { @MainActor in Self.endUploadAssertion(assertion) } }
             let historyID = TelemetryService.isEnabled ? await UpscaleLoggingService.log(entry) : nil
             guard let outputImage, temporarySaveEnabled || autoCloudBackupEnabled else { return }
             // Independent, best-effort attempts (a failed source upload
