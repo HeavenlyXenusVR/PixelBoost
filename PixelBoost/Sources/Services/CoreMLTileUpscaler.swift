@@ -317,12 +317,13 @@ final class CoreMLTileUpscaler: ImageUpscaling {
                 let active = first.union(last).insetBy(dx: CGFloat(config.overlap), dy: CGFloat(config.overlap))
                 onFrame(UpscaleLiveFrame(
                     preview: preview?.snapshot(),
-                    tilesDone: index, tilesTotal: plan.tiles.count, tilesReused: tilesReused,
+                    tilesDone: index, tilesTotal: plan.tiles.count,
                     columns: columns, rows: rows,
                     activeRegion: CGRect(
                         x: active.minX / CGFloat(source.width), y: active.minY / CGFloat(source.height),
                         width: active.width / CGFloat(source.width), height: active.height / CGFloat(source.height)
                     ),
+                    tilesReused: tilesReused,
                     pixelsDone: pixelsDone, pixelsTotal: pixelsTotal,
                     isThermalPaced: pacing > 0
                 ))
