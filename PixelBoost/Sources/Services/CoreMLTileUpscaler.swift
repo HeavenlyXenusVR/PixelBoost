@@ -159,7 +159,7 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         // 1. Decode every source pixel once, in the photo's own color space.
         guard let source = PixelPlane(decoding: cgImage) else { throw UpscaleError.renderFailed }
         let colorSpace = source.colorSpace
-        let hasAlpha = source.unpremultiplyIfTransparent()
+        let alphaPlane = source.unpremultiplyIfTransparent()
 
         let output = Self.outputSize(sourceWidth: source.width, sourceHeight: source.height, scale: outputScale)
         guard let canvas = CGContext(
@@ -306,8 +306,8 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         }
 
         // 5. Put the photo's own transparency back over the opaque model output.
-        if hasAlpha {
-            Self.applyAlpha(of: cgImage, to: canvasData, width: output.width, height: output.height, bytesPerRow: canvas.bytesPerRow)
+        if let alphaPlane {
+            Self.applyAlpha(alphaPlane, sourceWidth: source.width, sourceHeight: source.height, to: canvasData, width: output.width, height: output.height, bytesPerRow: canvas.bytesPerRow)
         }
 
         guard let stitched = canvas.makeImage() else { throw UpscaleError.renderFailed }
@@ -457,13 +457,22 @@ final class CoreMLTileUpscaler: ImageUpscaling {
         return BGRAView(base: scratch, width: width, height: height, bytesPerRow: bytesPerRow, release: { scratch.deallocate() })
     }
 
-    /// Resamples the source's alpha to the canvas size and premultiplies
-    /// the (opaque) model output by it.
-    private static func applyAlpha(of image: CGImage, to canvas: UnsafeMutableRawPointer, width: Int, height: Int, bytesPerRow: Int) {
-        guard let mask = CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8,
-            bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ), let alphaImage = alphaMask(of: image) else { return }
+    /// Resamples the source's alpha plane to the canvas size and
+    /// premultiplies the (opaque) model output by it.
+    private static func applyAlpha(_ alpha: Data, sourceWidth: Int, sourceHeight: Int, to canvas: UnsafeMutableRawPointer, width: Int, height: Int, bytesPerRow: Int) {
+        let gray = CGColorSpaceCreateDeviceGray()
+        guard let provider = CGDataProvider(data: alpha as CFData),
+              let alphaImage = CGImage(
+                width: sourceWidth, height: sourceHeight, bitsPerComponent: 8, bitsPerPixel: 8,
+                bytesPerRow: sourceWidth, space: gray,
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
+              ),
+              let mask = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width, space: gray, bitmapInfo: CGImageAlphaInfo.none.rawValue
+              )
+        else { return }
         mask.interpolationQuality = .high
         mask.draw(alphaImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         guard let maskData = mask.data else { return }
@@ -472,33 +481,14 @@ final class CoreMLTileUpscaler: ImageUpscaling {
             let pixelRow = canvas.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
             for x in 0..<width {
                 let a = UInt16(alphaRow[x])
-                let p = pixelRow + x * 4
                 if a == 255 { continue }
+                let p = pixelRow + x * 4
                 p[0] = UInt8((UInt16(p[0]) * a + 127) / 255)
                 p[1] = UInt8((UInt16(p[1]) * a + 127) / 255)
                 p[2] = UInt8((UInt16(p[2]) * a + 127) / 255)
                 p[3] = UInt8(a)
             }
         }
-    }
-
-    /// The source's alpha channel as an 8-bit grayscale image.
-    private static func alphaMask(of image: CGImage) -> CGImage? {
-        let width = image.width, height = image.height
-        guard let alphaOnly = CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8,
-            bytesPerRow: width, space: nil, bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue
-        ) else { return nil }
-        alphaOnly.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let data = alphaOnly.data,
-              let provider = CGDataProvider(data: Data(bytes: data, count: alphaOnly.bytesPerRow * height) as CFData)
-        else { return nil }
-        return CGImage(
-            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8,
-            bytesPerRow: alphaOnly.bytesPerRow, space: CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
-            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
-        )
     }
 }
 
@@ -535,30 +525,38 @@ private final class PixelPlane {
 
     /// Un-premultiplies in place if any pixel is less than fully opaque,
     /// so the model sees true color at soft edges instead of color darkened
-    /// toward black. Returns whether the photo has transparency at all.
-    func unpremultiplyIfTransparent() -> Bool {
+    /// toward black, then marks every pixel opaque for the model. Returns
+    /// the original alpha plane (one byte per pixel, row-major), or nil if
+    /// the photo has no transparency at all.
+    func unpremultiplyIfTransparent() -> Data? {
         var transparent = false
-        for y in 0..<height {
+        for y in 0..<height where !transparent {
             let row = data.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
-            for x in 0..<width {
-                let p = row + x * 4
-                let a = UInt16(p[3])
-                if a == 255 { continue }
+            for x in 0..<width where row[x * 4 + 3] != 255 {
                 transparent = true
-                if a == 0 { continue }
-                p[0] = UInt8(min(255, (UInt16(p[0]) * 255 + a / 2) / a))
-                p[1] = UInt8(min(255, (UInt16(p[1]) * 255 + a / 2) / a))
-                p[2] = UInt8(min(255, (UInt16(p[2]) * 255 + a / 2) / a))
+                break
             }
         }
-        if transparent {
-            // The model expects opaque input; alpha is restored afterwards.
+        guard transparent else { return nil }
+        var alpha = Data(count: width * height)
+        alpha.withUnsafeMutableBytes { buffer in
+            guard let plane = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
             for y in 0..<height {
                 let row = data.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
-                for x in 0..<width { row[x * 4 + 3] = 255 }
+                for x in 0..<width {
+                    let p = row + x * 4
+                    let a = UInt16(p[3])
+                    plane[y * width + x] = p[3]
+                    if a != 255 && a != 0 {
+                        p[0] = UInt8(min(255, (UInt16(p[0]) * 255 + a / 2) / a))
+                        p[1] = UInt8(min(255, (UInt16(p[1]) * 255 + a / 2) / a))
+                        p[2] = UInt8(min(255, (UInt16(p[2]) * 255 + a / 2) / a))
+                    }
+                    p[3] = 255
+                }
             }
         }
-        return transparent
+        return alpha
     }
 
     /// Copies a `size`² square whose top-left is `origin` (which may lie
