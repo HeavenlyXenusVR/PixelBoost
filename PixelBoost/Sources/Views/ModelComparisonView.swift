@@ -21,7 +21,7 @@ struct ModelComparisonView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Every bundled model ran on your full photo — tap one to view it full-screen, then use whichever looks best to you.")
+                    Text("Every bundled model ran on your full photo — tap one to view it full-screen, then use whichever looks best to you. Previews are screen-sized; the one you pick is restored at full resolution.")
                         .pbFont(.body)
                         .foregroundStyle(PBColor.inkDim)
                         .padding(.horizontal, 2)
@@ -80,7 +80,7 @@ struct ModelComparisonView: View {
             )) {
                 if let zoomedResult {
                     ZStack(alignment: .bottom) {
-                        ZoomableImageView(image: zoomedResult.image)
+                        ZoomableImageView(image: zoomedResult.preview)
                         Button {
                             onPick(zoomedResult)
                             dismiss()
@@ -106,7 +106,7 @@ private struct ComparisonCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             PBImageFrame(cornerRadius: 14) {
-                Image(uiImage: result.image)
+                Image(uiImage: result.preview)
                     .resizable()
                     .scaledToFill()
                     .frame(height: 150)

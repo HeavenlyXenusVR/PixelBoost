@@ -475,7 +475,15 @@ Swift Package resolution, no network access needed at build time.
   test; it's a flat stretched-pixel approximation, not true mirroring, so
   some residual edge softness can remain.
 - No disk-based caching of intermediate tiles — very large photos (many
-  tiles) hold each tile's output in memory until the final stitch.
+  tiles) hold each tile's output in memory until the final stitch. A
+  Compare Models sweep's *finished* candidates are spilled to disk though
+  (`ComparisonResultStore`): keeping all N in memory cost ~86MB per
+  candidate, which real telemetry showed driving an 8-model sweep from
+  153MB to 754MB, through four memory warnings, into thermal throttling,
+  and into the output memory guard capping half of all compare runs. The
+  grid shows screen-sized previews and the picked candidate is read back at
+  full resolution. The tradeoff is a lossless PNG encode per candidate
+  (order of a second on a 20MP result) added to the sweep.
 - All four bundled models' conversions were checked in PyTorch (real photo in,
   plausible sharper output, no NaNs) but the actual compiled `.mlpackage`
   files have not been run in Xcode/the simulator directly — that requires

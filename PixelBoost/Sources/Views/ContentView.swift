@@ -127,7 +127,7 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: Binding(
                 get: { !viewModel.comparisonResults.isEmpty },
-                set: { if !$0 { viewModel.comparisonResults = [] } }
+                set: { if !$0 { viewModel.dismissComparison() } }
             )) {
                 ModelComparisonView(
                     results: viewModel.comparisonResults,

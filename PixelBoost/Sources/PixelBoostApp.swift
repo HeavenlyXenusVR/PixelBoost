@@ -28,6 +28,11 @@ struct PixelBoostApp: App {
             "temporary_cloud_save": provider.temporaryCloudSaveEnabled,
         ])
         TelemetryService.snapshot(reason: "launch")
+        // A sweep interrupted by a crash or a force-quit leaves its spilled
+        // candidate files behind, and nothing can reach them once
+        // `comparisonResults` is gone. They're in Caches so the system would
+        // reclaim them eventually, but not promptly.
+        ComparisonResultStore.clear()
     }
 
     var body: some Scene {

@@ -3,10 +3,22 @@ import SwiftUI
 import UIKit
 
 /// One bundled model's full-photo result from `UpscalerViewModel.compareModels()`.
+///
+/// The full-resolution pixels live on disk (see `ComparisonResultStore`),
+/// not here: holding every candidate's finished image in memory at once was
+/// costing ~86MB per candidate and driving a sweep into memory warnings and
+/// thermal throttling. `preview` is the display-sized copy the grid and the
+/// zoom view read; `fileURL` is read back only for the one that gets picked.
 struct ModelComparisonResult: Identifiable {
     let id = UUID()
     let choice: UpscaleModelChoice
-    let image: UIImage
+    /// Display-sized (longest side 2048), the only copy kept resident.
+    let preview: UIImage
+    /// Where the full-resolution result was spilled. `nil` if the write
+    /// failed, in which case `preview` holds the full image and is used
+    /// as-is — the old in-memory behavior, as a fallback rather than the
+    /// default.
+    let fileURL: URL?
     let sharpnessScore: Double
 }
 
@@ -141,6 +153,9 @@ final class UpscalerViewModel: ObservableObject {
     private var session: UpscaleSession?
 
     @Published var comparisonResults: [ModelComparisonResult] = []
+    /// True while a picked candidate's full-resolution pixels are being read
+    /// back off disk — brief, but long enough to be worth not looking frozen.
+    @Published private(set) var isLoadingPick = false
     @Published var isComparing = false
     @Published var comparisonProgress: Double = 0
 
@@ -462,6 +477,9 @@ final class UpscalerViewModel: ObservableObject {
             // so the candidate rows can carry it as they're written.
             let comparisonID = UUID().uuidString
             comparisonSweepID = comparisonID
+            // Anything still on disk belongs to a previous sweep (or to one
+            // interrupted by a crash) and is unreachable now.
+            ComparisonResultStore.clear()
             let sweepStartedAt = Date()
             let thermalStateStart = TelemetryService.thermalStateName
 
@@ -496,10 +514,23 @@ final class UpscalerViewModel: ObservableObject {
                 let candidateMS = Int(Date().timeIntervalSince(candidateStartedAt) * 1000)
                 if let result = outcome.result {
                     let sharpness = UpscalerProvider.sharpnessScore(result.image)
-                    results.append(ModelComparisonResult(
-                        choice: candidate.choice, image: result.image,
+                    // Spill to disk and keep only a display-sized preview
+                    // before the next model runs, so the sweep's footprint
+                    // stays flat instead of growing by a finished image per
+                    // candidate. Both the encode and the downsample go off
+                    // the main actor — each is hundreds of milliseconds on a
+                    // full-resolution result.
+                    let entry = ModelComparisonResult(
+                        choice: candidate.choice,
+                        preview: await Task.detached(priority: .userInitiated) {
+                            result.image.downsampledForDisplay(maxDimension: 2048)
+                        }.value,
+                        fileURL: await Task.detached(priority: .userInitiated) {
+                            ComparisonResultStore.write(result.image, id: UUID())
+                        }.value,
                         sharpnessScore: sharpness
-                    ))
+                    )
+                    results.append(entry)
                     candidatePayloads.append(ComparisonCandidatePayload(
                         model_name: candidate.choice.rawValue,
                         candidate_index: index,
@@ -647,10 +678,48 @@ final class UpscalerViewModel: ObservableObject {
         // difference between "best of 6" and "the only one that worked".
         recordComparisonPick(result.choice)
         let input = sourceImage
-        skipNextAutoCloudBackup = true
-        resultImage = result.image
+        let choice = result.choice
+        let preview = result.preview
+        let fileURL = result.fileURL
         comparisonResults = []
-        uploadComparisonPick(result, source: input)
+        guard let fileURL else {
+            // The spill failed for this candidate, so `preview` is the full
+            // image rather than a downsample — use it directly.
+            applyPick(preview, choice: choice, source: input)
+            return
+        }
+        // Read the full-resolution pixels back off the main actor; decoding
+        // a 20MP PNG there would visibly stall the dismiss animation.
+        isLoadingPick = true
+        Task {
+            let full = await Task.detached(priority: .userInitiated) {
+                ComparisonResultStore.load(fileURL)
+            }.value
+            isLoadingPick = false
+            // Falling back to the preview would silently hand back a
+            // 2048px image in place of the real result, so say so instead.
+            guard let full else {
+                errorMessage = "Couldn't load that result — try running Compare Models again."
+                Haptics.error()
+                ComparisonResultStore.clear()
+                return
+            }
+            applyPick(full, choice: choice, source: input)
+            ComparisonResultStore.clear()
+        }
+    }
+
+    private func applyPick(_ image: UIImage, choice: UpscaleModelChoice, source: UIImage?) {
+        skipNextAutoCloudBackup = true
+        resultImage = image
+        uploadComparisonPick(image, choice: choice, source: source)
+    }
+
+    /// Dismissing the grid without picking — drops the spilled candidates,
+    /// which nothing can reach once `comparisonResults` is empty.
+    func dismissComparison() {
+        comparisonResults = []
+        ComparisonResultStore.clear()
     }
 
     /// A sweep's candidate runs deliberately skip the per-run cloud upload
@@ -658,13 +727,12 @@ final class UpscalerViewModel: ObservableObject {
     /// the source once per candidate and every candidate's result, for a
     /// set of images the user is about to discard all but one of. The
     /// upload happens here instead, once, for the result actually chosen.
-    private func uploadComparisonPick(_ result: ModelComparisonResult, source: UIImage?) {
+    private func uploadComparisonPick(_ image: UIImage, choice: UpscaleModelChoice, source: UIImage?) {
         let temporarySave = provider.temporaryCloudSaveEnabled
         let autoBackup = provider.autoCloudBackupEnabled
         guard temporarySave || autoBackup else { return }
         let ttlHours = provider.temporaryCloudTTLHours
-        let image = result.image
-        let label = [result.choice.modelName, "\(provider.scaleFactor.rawValue)x", "compare_pick"]
+        let label = [choice.modelName, "\(provider.scaleFactor.rawValue)x", "compare_pick"]
             .joined(separator: " · ")
         // Same assertion the per-run upload takes: this starts right as the
         // user finishes choosing, which is exactly when they're likely to
@@ -770,14 +838,23 @@ final class UpscalerViewModel: ObservableObject {
     /// original with, that's the whole point of saving every candidate.
     func saveAllComparisonResultsToPhotos() {
         guard !comparisonResults.isEmpty else { return }
-        let images = comparisonResults.map(\.image)
+        // One at a time off disk — `map(\.image)` would pull every
+        // candidate back into memory simultaneously, which is the exact
+        // thing spilling them was meant to avoid.
+        let entries = comparisonResults.map { ($0.fileURL, $0.preview) }
         let watermarkEnabled = provider.watermarkEnabled
         let watermarkText = provider.watermarkText
         let watermarkPosition = provider.watermarkPosition
         let watermarkOpacity = provider.watermarkOpacity
         Task {
             do {
-                for image in images {
+                for (fileURL, preview) in entries {
+                    let full = fileURL.flatMap { url in
+                        ComparisonResultStore.load(url)
+                    }
+                    // No spill for this candidate means `preview` is the
+                    // full image (see ModelComparisonResult.fileURL).
+                    let image = full ?? preview
                     let imageToSave = watermarkEnabled
                         ? Watermark.apply(text: watermarkText, position: watermarkPosition, opacity: watermarkOpacity, to: image)
                         : image
