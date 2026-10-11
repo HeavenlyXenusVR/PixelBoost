@@ -136,4 +136,107 @@ struct ImageStatistics {
         }
         return total / Double((width - 2) * (height - 2))
     }
+
+    /// Fraction (0...1) of a candidate upscale's total edge energy that
+    /// landed in blocks the *source* itself measured as flat.
+    ///
+    /// `edgeEnergy` alone can't tell "genuinely sharpened a real edge"
+    /// apart from "invented plausible-looking texture in a blank area" —
+    /// both raise the mean Laplacian response the same way, which is why
+    /// `UpscalerProvider.autoSelectModel` could land on the candidate doing
+    /// the most repainting rather than the most sharpening. This grounds
+    /// the measurement against the source, block by block: a block the
+    /// source shows as flat (below `flatThreshold`) has no real detail to
+    /// sharpen, so any edge energy the candidate shows there at the
+    /// matching location is fabricated, not resolved. Graded in coarse
+    /// blocks rather than per-pixel so a handful of textured-over flat
+    /// patches register even when the frame has plenty of genuine edges
+    /// elsewhere to dilute a whole-image average.
+    ///
+    /// - Parameter scale: the candidate's own native output ratio
+    ///   (`UpscaleModelChoice.nativeScale`) — `output` is expected to be
+    ///   exactly `source`'s size times this.
+    static func hallucinationFraction(source: UIImage, output: UIImage, scale: Int, blockSize: Int = 16, flatThreshold: Double = 2.0) -> Double {
+        guard scale > 0, let sourceCG = source.cgImage, let outputCG = output.cgImage else { return 0 }
+        let sourceGrid = lumaGrid(of: sourceCG)
+        let outputGrid = lumaGrid(of: outputCG)
+        guard sourceGrid.width > 2, sourceGrid.height > 2, outputGrid.width > 2, outputGrid.height > 2 else { return 0 }
+
+        var fabricated = 0.0
+        var total = 0.0
+        var by = 0
+        while by < sourceGrid.height {
+            let blockHeight = min(blockSize, sourceGrid.height - by)
+            var bx = 0
+            while bx < sourceGrid.width {
+                let blockWidth = min(blockSize, sourceGrid.width - bx)
+                defer { bx += blockSize }
+
+                let outputWidth = min(blockWidth * scale, outputGrid.width - bx * scale)
+                let outputHeight = min(blockHeight * scale, outputGrid.height - by * scale)
+                guard outputWidth > 2, outputHeight > 2 else { continue }
+
+                let sourceEnergy = sourceGrid.meanAbsLaplacian(x: bx, y: by, width: blockWidth, height: blockHeight)
+                let outputEnergy = outputGrid.meanAbsLaplacian(x: bx * scale, y: by * scale, width: outputWidth, height: outputHeight)
+
+                total += outputEnergy
+                if sourceEnergy < flatThreshold {
+                    fabricated += outputEnergy
+                }
+            }
+            by += blockSize
+        }
+        guard total > 0 else { return 0 }
+        return fabricated / total
+    }
+
+    /// A decoded image's luma plane plus the mean-absolute-Laplacian
+    /// measurement over an arbitrary sub-rect of it — the per-block
+    /// primitive `hallucinationFraction` grids both images with, kept
+    /// separate from the single-shot `edgeEnergy(of:)` above since that one
+    /// always measures a whole image rather than a sliding block within it.
+    private struct LumaGrid {
+        let width: Int
+        let height: Int
+        let values: [Double]
+
+        /// `x`/`y`/`width`/`height` describe the block; the Laplacian still
+        /// reads one pixel of real neighbor context past the block's own
+        /// edge (clamped to the full image) rather than replicating, so
+        /// adjoining blocks agree at their shared border.
+        func meanAbsLaplacian(x: Int, y: Int, width blockWidth: Int, height blockHeight: Int) -> Double {
+            guard blockWidth > 2, blockHeight > 2 else { return 0 }
+            var total = 0.0
+            let yStart = max(1, y), yEnd = min(height - 1, y + blockHeight)
+            let xStart = max(1, x), xEnd = min(width - 1, x + blockWidth)
+            guard yEnd > yStart, xEnd > xStart else { return 0 }
+            for yy in yStart..<yEnd {
+                let row = yy * width
+                for xx in xStart..<xEnd {
+                    let i = row + xx
+                    let response = 4 * values[i] - values[i - 1] - values[i + 1] - values[i - width] - values[i + width]
+                    total += abs(response)
+                }
+            }
+            return total / Double((xEnd - xStart) * (yEnd - yStart))
+        }
+    }
+
+    private static func lumaGrid(of cgImage: CGImage) -> LumaGrid {
+        let width = cgImage.width, height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: max(1, width * height * 4))
+        guard width > 0, height > 0, let context = CGContext(
+            data: &pixels, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return LumaGrid(width: 0, height: 0, values: []) }
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var luma = [Double](repeating: 0, count: width * height)
+        for i in 0..<(width * height) {
+            let o = i * 4
+            luma[i] = 0.2126 * Double(pixels[o]) + 0.7152 * Double(pixels[o + 1]) + 0.0722 * Double(pixels[o + 2])
+        }
+        return LumaGrid(width: width, height: height, values: luma)
+    }
 }

@@ -43,20 +43,32 @@ enum UpscaleFidelity: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Back-projection step size, 0...1.
+    /// Back-projection step size, 0...1. `.natural` was 0.55 — strong enough
+    /// to correct for a sizable fraction of whatever high-frequency detail
+    /// the model added that didn't match a plain downsample of the source,
+    /// which in practice undid a visible chunk of the model's own
+    /// sharpening along with the artifacts it was meant to catch. Lowered
+    /// so Natural still pulls back genuine smearing/invention without
+    /// quietly flattening legitimate detail — `.faithful` keeps the full
+    /// correction since that's the point of picking it (renders/art/text).
     var detailLock: Double {
         switch self {
         case .off: return 0
-        case .natural: return 0.55
+        case .natural: return 0.25
         case .faithful: return 1.0
         }
     }
 
-    /// Halo Guard tolerance in 0-255 levels; nil disables it.
+    /// Halo Guard tolerance in 0-255 levels; nil disables it. `.natural` was
+    /// 10 — tight enough to clamp away not just ringing but the edge
+    /// contrast that reads as "sharp" to begin with, since this can't tell
+    /// the two apart. Raised to let more of that contrast through while
+    /// `.faithful` keeps the tight clamp for content where any halo at all
+    /// is worse than losing some sharpness.
     var haloTolerance: Int? {
         switch self {
         case .off: return nil
-        case .natural: return 10
+        case .natural: return 24
         case .faithful: return 4
         }
     }

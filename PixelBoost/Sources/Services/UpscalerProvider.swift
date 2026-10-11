@@ -596,7 +596,7 @@ final class UpscalerProvider: ObservableObject {
         let contentStats = ImageStatistics.measure(testRegion)
 
         var best: (choice: UpscaleModelChoice, score: Double)?
-        var scored: [(UpscaleModelChoice, Double, Double)] = []
+        var scored: [(UpscaleModelChoice, Double, Double, Double)] = []
         for candidate in candidates {
             guard let upscaler = await resolvedModel(for: candidate, overlap: overlap) else { continue }
             guard let result = try? await upscaler.upscale(testRegion, progress: { _ in }) else { continue }
@@ -611,8 +611,17 @@ final class UpscalerProvider: ObservableObject {
             if let contentStats {
                 affinity += Self.contentAffinity(for: candidate, stats: contentStats)
             }
-            let score = measured * (1 + affinity)
-            scored.append((candidate, measured, score))
+            // Raw edge energy rewards a GAN repainting fake texture into a
+            // blank patch exactly as much as it rewards genuinely
+            // sharpening a real edge — this is the one check that tells
+            // the two apart, by grounding the candidate's edges against
+            // where the *source* actually had any to begin with. A
+            // candidate whose "detail" is mostly fabricated loses most of
+            // its score here rather than winning the pick for looking
+            // busiest.
+            let hallucination = ImageStatistics.hallucinationFraction(source: testRegion, output: result.image, scale: candidate.nativeScale)
+            let score = measured * (1 + affinity) * (1 - hallucination)
+            scored.append((candidate, measured, hallucination, score))
             if best == nil || score > best!.score {
                 best = (candidate, score)
             }
@@ -629,7 +638,7 @@ final class UpscalerProvider: ObservableObject {
             "edge_energy": contentStats.map { round($0.edgeEnergy * 100) / 100 },
             "channel_spread": contentStats.map { round($0.channelSpread * 1000) / 1000 },
             "mean_luma": contentStats.map { round($0.meanLuma * 1000) / 1000 },
-            "scores": scored.map { "\($0.0.rawValue):\(round($0.1 * 100) / 100)->\(round($0.2 * 100) / 100)" }
+            "scores": scored.map { "\($0.0.rawValue):\(round($0.1 * 100) / 100)-fake\(round($0.2 * 100) / 100)->\(round($0.3 * 100) / 100)" }
                 .joined(separator: ","),
         ], outcome: best == nil ? "failed" : "success")
         return best?.choice
