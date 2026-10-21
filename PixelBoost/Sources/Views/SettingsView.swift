@@ -239,7 +239,7 @@ struct SettingsView: View {
                 PBCard {
                     PBCardRow(icon: "info.circle", label: "Version", value: appVersion)
                     PBRowDivider()
-                    Link(destination: URL(string: "https://github.com/HeavenlyXenusVR/PixelBoost")!) {
+                    Link(destination: URL(string: "https://github.com/HollowHeavenXR/PixelBoost")!) {
                         PBCardRow(icon: "chevron.left.forwardslash.chevron.right", iconTint: PBColor.accent, label: "Source on GitHub")
                     }
                 }
