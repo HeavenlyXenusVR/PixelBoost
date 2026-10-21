@@ -19,11 +19,11 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageFilter
 
-sys.path.insert(0, "/home/proxy/Documents/Projects/PixelBoost/Models/convert")
+sys.path.insert(0, "/home/desmondc/Documents/Projects/PixelBoost/Models/convert")
 from rrdbnet import RRDBNet
 from srvgg_arch import SRVGGNetCompact
 
-WEIGHTS = "/home/proxy/pb-weights"
+WEIGHTS = "/home/desmondc/pb-weights"
 TILE_SIZE = 128
 
 # UpscaleDetail.maxModelInputPixels

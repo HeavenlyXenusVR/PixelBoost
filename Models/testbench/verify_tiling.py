@@ -21,7 +21,7 @@ import pipeline
 
 torch.set_num_threads(8)
 
-U = "/home/proxy/.claude/uploads/3a35ead3-8cfc-48be-82a9-e664a3871e28/"
+U = "/home/desmondc/.claude/uploads/3a35ead3-8cfc-48be-82a9-e664a3871e28/"
 crop = Image.open(U + "d2a514eb-image.jpg").convert("RGB").crop((560, 90, 880, 410))
 
 model, native = pipeline.load("fastClean")
